@@ -1,11 +1,24 @@
-// app/ClientPage.tsx
-"use client"; // Mark as Client Component
+"use client";
 
-import { useState, useEffect, ReactNode, Suspense } from "react";
+import { useState, useEffect } from "react";
+import { PublicClientApplication, InteractionRequiredAuthError } from "@azure/msal-browser";
+import { Groq } from "groq-sdk";
+import { useAccount, useWalletClient } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ethers, BrowserProvider } from "ethers";
 import { AppOnchainProvider } from "@/components/OnchainProvider";
 import { sendUsdcToDeposit } from "@/lib/escrow";
+import jsPDF from "jspdf";
+import { createConfig, http, WagmiProvider } from "wagmi"; // Added WagmiProvider and createConfig
+import { base } from "wagmi/chains";
+import { coinbaseWallet } from "wagmi/connectors";
 import "./styles.css";
+
+// Force dynamic rendering for wallet connection
+export const dynamic = "force-dynamic";
+
+// Create QueryClient instance
+const queryClient = new QueryClient();
 
 // Define interfaces for TypeScript
 interface Listing {
@@ -92,13 +105,13 @@ const usStates = [
 ];
 
 const cityAliases: { [key: string]: { city: string; state: string } } = {
-  nyc: { city: "New York", state: "NY" },
+  "nyc": { city: "New York", state: "NY" },
   "new york": { city: "New York", state: "NY" },
-  ny: { city: "New York", state: "NY" },
-  la: { city: "Los Angeles", state: "CA" },
-  sf: { city: "San Francisco", state: "CA" },
-  chicago: { city: "Chicago", state: "IL" },
-  miami: { city: "Miami", state: "FL" },
+  "ny": { city: "New York", state: "NY" },
+  "la": { city: "Los Angeles", state: "CA" },
+  "sf": { city: "San Francisco", state: "CA" },
+  "chicago": { city: "Chicago", state: "IL" },
+  "miami": { city: "Miami", state: "FL" },
 };
 
 const msalConfig = {
@@ -109,122 +122,92 @@ const msalConfig = {
   },
 };
 
+const msalInstance = typeof window !== "undefined" ? new PublicClientApplication(msalConfig) : null;
 const msalScopes = ["Calendars.ReadWrite", "Mail.Send"];
+const groq = typeof window !== "undefined" ? new Groq({ apiKey: process.env.NEXT_PUBLIC_GROQ_API_KEY || "", dangerouslyAllowBrowser: true }) : null;
 
-// Dynamically load heavy dependencies
-const loadMsal = async () => {
-  console.log("Loading MSAL...");
-  const { PublicClientApplication, InteractionRequiredAuthError } = await import("@azure/msal-browser");
-  return { PublicClientApplication, InteractionRequiredAuthError };
+const testListing: Listing = {
+  id: "test-listing",
+  address: "123 Main Street, New York, NY 10001",
+  price: 2500,
+  bedrooms: 2,
+  bathrooms: 1,
+  propertyType: "Apartment",
+  description: "A cozy 2-bedroom apartment in the heart of New York City, perfect for urban living.",
+  livingArea: 800,
+  detailUrl: "https://www.example.com/listing/123-main-street",
+  agent: {
+    name: "Patrick Devaney",
+    email: "patrickbdevaney@gmail.com",
+    phone: "305-815-2198",
+  },
 };
 
-const loadGroq = async () => {
-  console.log("Loading Groq SDK...");
-  const { Groq } = await import("groq-sdk");
-  return new Groq({ apiKey: process.env.NEXT_PUBLIC_GROQ_API_KEY || "", dangerouslyAllowBrowser: true });
+// Function to get the next business day at 2:00 PM EDT
+const getDefaultBusinessTime = (): string => {
+  const now = new Date();
+  let targetDate = new Date(now);
+  targetDate.setDate(now.getDate() + 3); // 3 days from now
+  const day = targetDate.getDay();
+  if (day === 0) targetDate.setDate(targetDate.getDate() + 1); // Skip Sunday
+  else if (day === 6) targetDate.setDate(targetDate.getDate() + 2); // Skip Saturday
+  targetDate.setHours(14, 0, 0, 0); // Set to 2:00 PM
+  return targetDate.toISOString().split(".")[0];
 };
 
-const loadEthers = async () => {
-  console.log("Loading Ethers...");
-  const { ethers, BrowserProvider } = await import("ethers");
-  return { ethers, BrowserProvider };
+// Function to generate Google Street View URL
+const getStreetViewUrl = (address: string) => {
+  const encodedAddress = encodeURIComponent(address);
+  const url = `/api/streetview?address=${encodedAddress}`;
+  console.log("Street View API Route URL:", url);
+  return url;
 };
-
-const loadJsPDF = async () => {
-  console.log("Loading jsPDF...");
-  const { default: jsPDF } = await import("jspdf");
-  return jsPDF;
-};
-
-// Dynamically load CoinbaseWalletSDK
-const loadCoinbaseSDK = async () => {
-  console.log("Loading Coinbase Wallet SDK...");
-  const { default: CoinbaseWalletSDK } = await import("@coinbase/wallet-sdk");
-  return new CoinbaseWalletSDK({
-    appName: "aRentic",
-    appLogoUrl: "/logo-48.png",
-    appChainIds: [8453], // Base chain ID
-  });
-};
-
-// ConnectWalletButton component
-const ConnectWalletButton = ({ onConnect }: { onConnect: (address: string) => void }) => {
-  const [isConnecting, setIsConnecting] = useState(false);
-
-  const handleConnect = async () => {
-    setIsConnecting(true);
-    try {
-      const coinbaseWallet = await loadCoinbaseSDK();
-      const provider = coinbaseWallet.makeWeb3Provider();
-      const accounts = (await provider.request({
-        method: "eth_requestAccounts",
-      })) as string[];
-      if (accounts.length > 0) {
-        onConnect(accounts[0]);
-      }
-    } catch (error) {
-      console.error("Wallet connection failed:", error);
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  return (
-    <button
-      onClick={handleConnect}
-      className="auth-button"
-      disabled={isConnecting}
-    >
-      {isConnecting ? "Connecting..." : "Connect Coinbase Wallet"}
-    </button>
-  );
-};
-
-// Web3Wrapper component
-function Web3Wrapper({
-  children,
-  onWalletConnect,
-}: {
-  children: ReactNode;
-  onWalletConnect: (address: string) => void;
-}) {
-  const [isConnected, setIsConnected] = useState(false);
-  const [address, setAddress] = useState<string | null>(null);
+// Custom hook to convert WalletClient to ethers.Signer
+const useEthersSigner = () => {
+  const { data: walletClient } = useWalletClient();
+  const [signer, setSigner] = useState<ethers.Signer | null>(null);
 
   useEffect(() => {
-    const checkConnection = async () => {
-      try {
-        const coinbaseWallet = await loadCoinbaseSDK();
-        const provider = coinbaseWallet.makeWeb3Provider();
-        const accounts = (await provider.request({
-          method: "eth_accounts",
-        })) as string[];
-        if (accounts.length > 0) {
-          setIsConnected(true);
-          setAddress(accounts[0]);
-          onWalletConnect(accounts[0]);
-        }
-      } catch (error) {
-        console.error("Error checking wallet connection:", error);
-      }
-    };
-    checkConnection();
-  }, [onWalletConnect]);
+    if (walletClient) {
+      // Use base chain configuration for Base Mainnet
+      const provider = new BrowserProvider(walletClient.transport, base);
+      provider.getSigner().then(setSigner).catch((error) => {
+        console.error("Failed to get signer:", error);
+        setSigner(null);
+      });
+    } else {
+      setSigner(null);
+    }
+  }, [walletClient]);
 
-  console.log("Web3Wrapper rendered, isConnected:", isConnected);
+  return signer;
+};
+
+// Web3-specific component to isolate useAccount
+function Web3Wrapper({ children, onWalletConnect }: { children: React.ReactNode; onWalletConnect: (address: string) => void }) {
+  const { isConnected, address } = useAccount();
+
+  useEffect(() => {
+    if (isConnected && address) {
+      onWalletConnect(address);
+    }
+  }, [isConnected, address, onWalletConnect]);
+
   return (
     <div>
       {isConnected ? (
-        <p style={{ color: "#22c55e", textAlign: "center" }}>
-          ✅ Wallet Connected: {address}
-        </p>
+        <p style={{ color: "#22c55e", textAlign: "center" }}>✅ Wallet Connected: {address}</p>
       ) : (
         <div style={{ display: "flex", justifyContent: "center", margin: "1rem 0" }}>
-          <ConnectWalletButton onConnect={(addr) => {
-            setIsConnected(true);
-            setAddress(addr);
-            onWalletConnect(addr);
-          }} />
+          <button
+            onClick={() => {
+              // Trigger wallet connection via OnchainKit modal
+              // Note: This relies on OnchainKitProvider handling the modal
+            }}
+            className="connect-wallet-button"
+          >
+            Connect Wallet
+          </button>
         </div>
       )}
       {children}
@@ -232,7 +215,7 @@ function Web3Wrapper({
   );
 }
 
-// ListingCard component
+// Listing Card component
 function ListingCard({
   list,
   handleGenerateDraft,
@@ -244,8 +227,6 @@ function ListingCard({
   sendEmailAndCreateInvite,
   finalActionLoading,
   handleDeposit,
-  handleFundWallet,
-  isFundingWallet,
 }: {
   list: Listing;
   handleGenerateDraft: (listing: Listing) => void;
@@ -257,8 +238,6 @@ function ListingCard({
   sendEmailAndCreateInvite: (listing: Listing, draft: string, eventTime: string) => void;
   finalActionLoading: { [key: string]: boolean };
   handleDeposit: (listingId: string, amountUSD: string) => void;
-  handleFundWallet: (amountUSD: string, listingId: string) => void;
-  isFundingWallet: { [key: string]: boolean };
 }) {
   const [imageUrl, setImageUrl] = useState<string>("/fallback-image.jpg");
 
@@ -296,31 +275,19 @@ function ListingCard({
       <p>
         <strong>Listing:</strong>{" "}
         {list.detailUrl !== "#" ? (
-          <a
-            href={formatUrl(list.detailUrl)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="agent-link"
-          >
+          <a href={formatUrl(list.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
             View Agent Site
           </a>
         ) : (
           <span style={{ color: "#d1d5db" }}>No agent site available</span>
         )}
       </p>
-      <button
-        className="generate-draft-button"
-        onClick={() => handleGenerateDraft(list)}
-      >
+      <button className="generate-draft-button" onClick={() => handleGenerateDraft(list)}>
         📝 Generate Email Draft
       </button>
       {listingDrafts[list.id] && (
         <div className="draft-container">
-          <textarea
-            className="draft-textarea"
-            value={listingDrafts[list.id]}
-            readOnly
-          />
+          <textarea className="draft-textarea" value={listingDrafts[list.id]} readOnly />
           <button
             className="copy-draft-button"
             onClick={() => {
@@ -343,32 +310,18 @@ function ListingCard({
                 </button>
               ) : (
                 <button
-                  onClick={() =>
-                    sendEmailAndCreateInvite(list, listingDrafts[list.id], calendarTime)
-                  }
+                  onClick={() => sendEmailAndCreateInvite(list, listingDrafts[list.id], calendarTime)}
                   className="execute-button"
                   disabled={finalActionLoading[list.id] || !list.agent.email}
                 >
-                  {finalActionLoading[list.id]
-                    ? "Sending..."
-                    : "🚀 Send Email & Invite"}
+                  {finalActionLoading[list.id] ? "Sending..." : "🚀 Send Email & Invite"}
                 </button>
               )}
               <button
-                onClick={() => handleFundWallet((list.price * 0.15).toFixed(2), list.id)}
-                className="fund-wallet-button"
-                disabled={isFundingWallet[list.id] || !authenticated}
-              >
-                {isFundingWallet[list.id] ? "Funding Wallet..." : "💸 Fund Wallet"}
-              </button>
-              <button
                 onClick={() => handleDeposit(list.id, (list.price * 0.15).toFixed(2))}
                 className="deposit-button"
-                disabled={finalActionLoading[list.id] || !authenticated}
               >
-                {finalActionLoading[list.id]
-                  ? "Depositing..."
-                  : `💰 Deposit Escrow($${(list.price * 0.15).toFixed(2)})`}
+                💰 Deposit Escrow (${(list.price * 0.15).toFixed(2)})
               </button>
             </>
           )}
@@ -378,105 +331,20 @@ function ListingCard({
   );
 }
 
-const testListing: Listing = {
-  id: "test-listing",
-  address: "123 Main Street, New York, NY 10001",
-  price: 2500,
-  bedrooms: 2,
-  bathrooms: 1,
-  propertyType: "Apartment",
-  description: "A cozy 2-bedroom apartment in the heart of New York City, perfect for urban living.",
-  livingArea: 800,
-  detailUrl: "https://www.example.com/listing/123-main-street",
-  agent: {
-    name: "Patrick Devaney",
-    email: "patrickbdevaney@gmail.com",
-    phone: "305-815-2198",
-  },
-};
-
-// Function to get the next business day at 2:00 PM EDT
-const getDefaultBusinessTime = (): string => {
-  const now = new Date();
-  let targetDate = new Date(now);
-  targetDate.setDate(now.getDate() + 3);
-  const day = targetDate.getDay();
-  if (day === 0) targetDate.setDate(targetDate.getDate() + 1);
-  else if (day === 6) targetDate.setDate(targetDate.getDate() + 2);
-  targetDate.setHours(14, 0, 0, 0);
-  return targetDate.toISOString().split(".")[0];
-};
-
-// Function to generate Street View URL
-const getStreetViewUrl = (address: string) => {
-  const encodedAddress = encodeURIComponent(address);
-  const url = `/api/streetview?address=${encodedAddress}`;
-  console.log("Street View API Route URL:", url);
-  return url;
-};
-
-// Custom hook to convert Coinbase Wallet provider to ethers.Signer
-const useEthersSigner = () => {
-  const [signer, setSigner] = useState<any>(null);
-
-  useEffect(() => {
-    const initializeSigner = async () => {
-      console.log("Initializing signer...");
-      try {
-        const coinbaseWallet = await loadCoinbaseSDK();
-        const provider = coinbaseWallet.makeWeb3Provider();
-        const { BrowserProvider } = await loadEthers();
-        const ethersProvider = new BrowserProvider(provider);
-        const signer = await ethersProvider.getSigner();
-        setSigner(signer);
-        console.log("Signer initialized");
-      } catch (error) {
-        console.error("Failed to get signer:", error);
-        setSigner(null);
-      }
-    };
-    initializeSigner();
-  }, []);
-
-  return signer;
-};
-
-// Function to sign a message with Coinbase Wallet
-const useSignMessage = () => {
-  const signMessageAsync = async ({ message }: { message: string }) => {
-    try {
-      const coinbaseWallet = await loadCoinbaseSDK();
-      const provider = coinbaseWallet.makeWeb3Provider();
-      const accounts = (await provider.request({
-        method: "eth_accounts",
-      })) as string[];
-      if (accounts.length === 0) throw new Error("No accounts connected");
-      const signature = (await provider.request({
-        method: "personal_sign",
-        params: [message, accounts[0]],
-      })) as string;
-      return signature;
-    } catch (error) {
-      console.error("Sign message failed:", error);
-      throw error;
-    }
-  };
-  return { signMessageAsync };
-};
-
 // Function to format URL with protocol if missing
 const formatUrl = (url: string) => {
   if (!url) return "#";
   return url.startsWith("http://") || url.startsWith("https://") ? url : `http://${url}`;
 };
 
-function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void }) {
+function Home() {
   const [prompt, setPrompt] = useState<string>("");
   const [selectedState, setSelectedState] = useState<string>("NY");
   const [chat, setChat] = useState<string[]>([
     "Welcome to the Rental AI Assistant! 🏠",
     "Find your perfect rental by entering a search prompt below.",
-    "Steps: 1. Authenticate with Microsoft, 2. Sign in with Coinbase, 3. Fund Wallet, 4. Deposit to Escrow.",
+    "I’ll show you listings, help draft emails, and send calendar invites!",
+    "Use the test listing below to try sending an email and calendar invite.",
   ]);
   const [emailDraft, setEmailDraft] = useState<string>("");
   const [calendarTime, setCalendarTime] = useState<string>(getDefaultBusinessTime());
@@ -487,31 +355,39 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   const [listingDrafts, setListingDrafts] = useState<{ [key: string]: string }>({});
   const [authenticated, setAuthenticated] = useState<boolean>(false);
   const [finalActionLoading, setFinalActionLoading] = useState<{ [key: string]: boolean }>({});
-  const [isFundingWallet, setIsFundingWallet] = useState<{ [key: string]: boolean }>({});
   const [account, setAccount] = useState<any>(null);
   const [userWalletAddress, setUserWalletAddress] = useState<string | null>(null);
-  const [msalInstance, setMsalInstance] = useState<any>(null);
 
   const signer = useEthersSigner();
-  const { signMessageAsync } = useSignMessage();
 
+  // Fetch wallet address after authentication
   useEffect(() => {
-    if (userWalletAddress) {
-      onWalletConnect(userWalletAddress);
+    if (authenticated && account?.username) {
+      const fetchWalletAddress = async () => {
+        try {
+          const response = await fetch(`/api/user-wallet?email=${encodeURIComponent(account.username)}`);
+          const data = await response.json();
+          if (data.walletAddress) {
+            setUserWalletAddress(data.walletAddress);
+            setChat((prev) => [...prev, `✅ Retrieved wallet address: ${data.walletAddress}`]);
+          }
+        } catch (error) {
+          console.error("Error fetching wallet address:", error);
+          setChat((prev) => [...prev, "⚠️ Could not retrieve wallet address. Connect wallet to proceed."]);
+        }
+      };
+      fetchWalletAddress();
     }
-  }, [userWalletAddress, onWalletConnect]);
+  }, [authenticated, account]);
 
+  // Initialize MSAL
   useEffect(() => {
+    if (!msalInstance) return;
+
     const initMsal = async () => {
-      if (typeof window === "undefined") return;
-
-      const { PublicClientApplication } = await loadMsal();
-      const instance = new PublicClientApplication(msalConfig);
-      setMsalInstance(instance);
-
       try {
-        await instance.initialize();
-        const accounts = instance.getAllAccounts();
+        await msalInstance.initialize();
+        const accounts = msalInstance.getAllAccounts();
         if (accounts.length > 0) {
           setAccount(accounts[0]);
           setAuthenticated(true);
@@ -531,6 +407,7 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     initMsal();
   }, [listing]);
 
+  // Regenerate email draft when calendarTime changes
   useEffect(() => {
     if (listing && listing.agent.email) {
       generateInquiryDraft(listing).then((draft) => {
@@ -540,31 +417,6 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
       });
     }
   }, [calendarTime, listing]);
-
-  useEffect(() => {
-    if (authenticated && account?.username && userWalletAddress) {
-      const linkWallet = async () => {
-        try {
-          const message = `Link wallet ${userWalletAddress} to ${account.username}`;
-          const signature = await signMessageAsync({ message });
-          const response = await fetch("/api/user-wallet", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: account.username, walletAddress: userWalletAddress, signature }),
-          });
-          if (response.ok) {
-            setChat((prev) => [...prev, `✅ Wallet ${userWalletAddress} linked to ${account.username}`]);
-          } else {
-            setChat((prev) => [...prev, "⚠️ Failed to link wallet address."]);
-          }
-        } catch (error) {
-          console.error("Error linking wallet:", error);
-          setChat((prev) => [...prev, "⚠️ Error linking wallet address."]);
-        }
-      };
-      linkWallet();
-    }
-  }, [authenticated, account, userWalletAddress, signMessageAsync]);
 
   const handleLogin = async () => {
     if (!msalInstance) return;
@@ -587,35 +439,30 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     }
   };
 
-  const handleFundWallet = async (amountUSD: string, listingId: string) => {
-    if (!userWalletAddress || !authenticated || !account?.username) {
-      setChat((prev) => [...prev, "⚠️ Please authenticate with Microsoft and Coinbase before funding."]);
-      return;
-    }
-    setIsFundingWallet((prev) => ({ ...prev, [listingId]: true }));
-    try {
-      const response = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: amountUSD, walletAddress: userWalletAddress }),
-      });
-      const data = await response.json();
-      if (data.hostedUrl) {
-        setChat((prev) => [...prev, `✅ Redirecting to Coinbase to fund wallet with $${amountUSD}...`]);
-        window.open(data.hostedUrl, "_blank");
-      } else {
-        setChat((prev) => [...prev, "⚠️ Failed to initiate wallet funding."]);
+  const handleWalletConnect = async (address: string) => {
+    if (account?.username) {
+      try {
+        const response = await fetch("/api/user-wallet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: account.username, walletAddress: address }),
+        });
+        if (response.ok) {
+          setUserWalletAddress(address);
+          setChat((prev) => [...prev, `✅ Wallet ${address} linked to ${account.username}`]);
+        } else {
+          setChat((prev) => [...prev, "⚠️ Failed to link wallet address."]);
+        }
+      } catch (error) {
+        console.error("Error linking wallet:", error);
+        setChat((prev) => [...prev, "⚠️ Error linking wallet address."]);
       }
-    } catch (error) {
-      console.error("Error funding wallet:", error);
-      setChat((prev) => [...prev, "⚠️ Error funding wallet. Please try again."]);
-    } finally {
-      setIsFundingWallet((prev) => ({ ...prev, [listingId]: false }));
+    } else {
+      setChat((prev) => [...prev, "⚠️ Please authenticate with Microsoft before connecting wallet."]);
     }
   };
 
   const parsePromptWithLLM = async (prompt: string): Promise<ParsedPrompt> => {
-    const groq = await loadGroq();
     if (!groq) return parsePromptFallback(prompt);
 
     try {
@@ -708,12 +555,7 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   const fetchRentals = async (query: string): Promise<{ primary: Listing | null; all: Listing[] }> => {
     try {
       const params = await parsePromptWithLLM(query);
-      const homeTypeMap: { [key: string]: string } = {
-        apartment: "Apartment",
-        house: "Single Family",
-        condo: "Condo",
-        townhome: "Townhouse",
-      };
+      const homeTypeMap: { [key: string]: string } = { apartment: "Apartment", house: "Single Family", condo: "Condo", townhome: "Townhouse" };
       const homeType = homeTypeMap[params.homeType || ""] || "Apartment";
       const searchParams = new URLSearchParams({
         city: params.city || "New York",
@@ -748,7 +590,6 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   };
 
   const generateInquiryDraft = async (listing: Listing): Promise<string> => {
-    const groq = await loadGroq();
     if (!groq) return "Could not generate inquiry draft.";
 
     try {
@@ -788,8 +629,7 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     }
   };
 
-  const generateContractPdfBase64 = async (address: string): Promise<string> => {
-    const jsPDF = await loadJsPDF();
+  const generateContractPdfBase64 = (address: string): string => {
     const doc = new jsPDF();
     doc.setFontSize(16);
     doc.text("Generic Rental Contract", 10, 10);
@@ -814,7 +654,6 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     setFinalActionLoading((prev) => ({ ...prev, [selectedListing.id]: true }));
     setChat((prev) => [...prev, `🚀 Sending inquiry email and creating calendar invite for ${selectedListing.address}...`]);
 
-    const { InteractionRequiredAuthError } = await loadMsal();
     const tokenRequest = {
       scopes: msalScopes,
       account: account,
@@ -848,7 +687,7 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
       }
     }
 
-    const pdfBase64 = await generateContractPdfBase64(selectedListing.address);
+    const pdfBase64 = generateContractPdfBase64(selectedListing.address);
 
     const emailPayload = {
       message: {
@@ -887,13 +726,7 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
         )}">View Listing Details</a><br>Please check your inbox or spam folder for my accompanying rental inquiry email.`,
       },
       attendees: [
-        {
-          emailAddress: {
-            name: selectedListing.agent.name || "Agent",
-            address: selectedListing.agent.email,
-          },
-          type: "required",
-        },
+        { emailAddress: { name: selectedListing.agent.name || "Agent", address: selectedListing.agent.email }, type: "required" },
       ],
     };
 
@@ -963,62 +796,28 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     setEmailDraft(draft);
     setChat((prev) => [
       ...prev,
-      `📝 Draft generated for ${selectedListing.address}. ${selectedListing.agent.email ? "Select a time and authenticate to send." : "No agent email found."}`,
+      `📝 Draft generated for ${selectedListing.address}. ${selectedListing.agent.email ? "Select a time and authenticate to send." : "No agent email found."
+      }`,
     ]);
   };
 
   const handleDeposit = async (listingId: string, amountUSD: string) => {
-    if (!signer || !userWalletAddress || !authenticated) {
-      setChat((prev) => [...prev, "⚠️ Please authenticate with Microsoft and Coinbase to deposit."]);
+    if (!signer || !userWalletAddress) {
+      setChat((prev) => [...prev, "Please connect wallet and authenticate to deposit."]);
       return;
     }
-    setFinalActionLoading((prev) => ({ ...prev, [listingId]: true }));
-    setChat((prev) => [...prev, `🚀 Checking wallet balance and initiating deposit of $${amountUSD} to escrow...`]);
-
+    setChat((prev) => [...prev, `🚀 Initiating deposit of $${amountUSD} to escrow...`]);
     try {
-      const { ethers } = await loadEthers();
-      const provider = signer.provider || new ethers.JsonRpcProvider(process.env.BASE_RPC_URL || "https://mainnet.base.org");
-      const usdcContract = new ethers.Contract(
-        process.env.NEXT_PUBLIC_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-        ["function balanceOf(address) view returns (uint256)", "function decimals() view returns (uint8)"],
-        signer
-      );
-      const decimals = await usdcContract.decimals();
-      const balance = await usdcContract.balanceOf(userWalletAddress);
-      const amountWei = ethers.parseUnits(amountUSD, decimals);
-      if (balance < amountWei) {
-        setChat((prev) => [...prev, `⚠️ Insufficient USDC balance. Please fund your wallet with at least $${amountUSD}.`]);
-        setFinalActionLoading((prev) => ({ ...prev, [listingId]: false }));
-        return;
-      }
-
-      const escrowCode = await provider.getCode(process.env.NEXT_PUBLIC_ESCROW_ADDRESS || "");
-      if (escrowCode === "0x") {
-        setChat((prev) => [...prev, "⚠️ Invalid escrow address. Please contact support."]);
-        setFinalActionLoading((prev) => ({ ...prev, [listingId]: false }));
-        return;
-      }
-
       const txHash = await sendUsdcToDeposit(signer, parseFloat(amountUSD), process.env.NEXT_PUBLIC_ESCROW_ADDRESS!);
-
-      const receipt = await provider.getTransactionReceipt(txHash);
-      if (receipt && receipt.status === 1) {
-        const message = `Deposit ${amountUSD} USDC for listing ${listingId} from ${userWalletAddress}`;
-        const signature = await signMessageAsync({ message });
-        await fetch("/api/escrow", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ listingId, txHash, amountUSD, email: account?.username || null, walletAddress: userWalletAddress, signature }),
-        });
-        setChat((prev) => [...prev, `✅ Escrow deposit tx confirmed: ${txHash}`]);
-      } else {
-        setChat((prev) => [...prev, "⚠️ Transaction failed or not confirmed. Please try again."]);
-      }
+      await fetch("/api/escrow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ listingId, txHash, amountUSD, email: account?.username || null, walletAddress: userWalletAddress }),
+      });
+      setChat((prev) => [...prev, `✅ Escrow deposit tx submitted: ${txHash}`]);
     } catch (e) {
-      console.error("Deposit error:", e);
-      setChat((prev) => [...prev, `❌ Deposit failed: ${e instanceof Error ? e.message : "Unknown error"}`]);
-    } finally {
-      setFinalActionLoading((prev) => ({ ...prev, [listingId]: false }));
+      console.error(e);
+      setChat((prev) => [...prev, "❌ Deposit failed."]);
     }
   };
 
@@ -1061,175 +860,136 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   };
 
   return (
-    <>
-      <div className="container">
-        <div className="header">
-          <h1 className="main-title">🏠 aRentic</h1>
-          <p className="subtitle">The smartest way to find and schedule your next rental with crypto escrow.</p>
-        </div>
+    <div className="container">
+      <div className="header">
+        <h1 className="main-title">🏠 aRentic</h1>
+        <p className="subtitle">The smartest way to find and schedule your next rental with crypto escrow.</p>
+      </div>
 
-        <div className="pre-schedule-section">
-          <h3>🗓️ Set Your Weekly Availability</h3>
-          <p>Tell us when you're free, and our AI will schedule viewings for you.</p>
-        </div>
+      <div className="pre-schedule-section">
+        <h3>🗓️ Set Your Weekly Availability</h3>
+        <p>Tell us when you're free, and our AI will schedule viewings for you.</p>
+      </div>
 
-        <div className="main-grid">
-          <div className="chat-section">
-            <div className="chat-container">
-              <div className="chat-header">
-                <h2 className="chat-title">
-                  💬 Chat
-                  {isLoading && <div className="spinner"></div>}
-                </h2>
-              </div>
-              <div className="chat-messages">
-                {chat.map((msg, i) => {
-                  const isUser = msg.startsWith("👤 You:");
-                  return (
-                    <div key={i} className={`message-wrapper ${isUser ? "user-message" : "system-message"}`}>
-                      <div className={`message ${isUser ? "user" : "system"}`}>
-                        <p>{msg}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-                {isLoading && (
-                  <div className="message-wrapper system-message">
-                    <div className="message system">
-                      <div className="typing-indicator">
-                        <div className="dot"></div>
-                        <div className="dot"></div>
-                        <div className="dot"></div>
-                      </div>
+      <div className="main-grid">
+        <div className="chat-section">
+          <div className="chat-container">
+            <div className="chat-header">
+              <h2 className="chat-title">
+                💬 Chat
+                {isLoading && <div className="spinner"></div>}
+              </h2>
+            </div>
+            <div className="chat-messages">
+              {chat.map((msg, i) => {
+                const isUser = msg.startsWith("👤 You:");
+                return (
+                  <div key={i} className={`message-wrapper ${isUser ? "user-message" : "system-message"}`}>
+                    <div className={`message ${isUser ? "user" : "system"}`}>
+                      <p>{msg}</p>
                     </div>
                   </div>
-                )}
-              </div>
-              <div className="input-area">
-                <div className="input-wrapper">
-                  <input
-                    type="text"
-                    className="chat-input"
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && handleSubmit()}
-                    placeholder="e.g., 2BR 1BA apartment in Williamsburg, New York under $3000"
-                    disabled={isLoading}
-                  />
-                  <select
-                    className="state-select"
-                    value={selectedState}
-                    onChange={(e) => setSelectedState(e.target.value)}
-                    disabled={isLoading}
-                  >
-                    {usStates.map((state) => (
-                      <option key={state.code} value={state.code}>
-                        {state.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={handleSubmit}
-                    className="send-button"
-                    disabled={isLoading || !prompt.trim()}
-                  >
-                    ✈️ Search
-                  </button>
+                );
+              })}
+              {isLoading && (
+                <div className="message-wrapper system-message">
+                  <div className="message system">
+                    <div className="typing-indicator">
+                      <div className="dot"></div>
+                      <div className="dot"></div>
+                      <div className="dot"></div>
+                    </div>
+                  </div>
                 </div>
+              )}
+            </div>
+            <div className="input-area">
+              <div className="input-wrapper">
+                <input
+                  type="text"
+                  className="chat-input"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyPress={(e) => e.key === "Enter" && handleSubmit()}
+                  placeholder="e.g., 2BR 1BA apartment in Williamsburg, New York under $3000"
+                  disabled={isLoading}
+                />
+                <select
+                  className="state-select"
+                  value={selectedState}
+                  onChange={(e) => setSelectedState(e.target.value)}
+                  disabled={isLoading}
+                >
+                  {usStates.map((state) => (
+                    <option key={state.code} value={state.code}>
+                      {state.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleSubmit}
+                  className="send-button"
+                  disabled={isLoading || !prompt.trim()}
+                >
+                  ✈️ Search
+                </button>
               </div>
             </div>
-          </div>
-
-          <div className="sidebar">
-            <div className="status-panel">
-              <h3 className="panel-title">⚡ Progress</h3>
-              <div className="status-items">
-                {listing && (
-                  <div className="status-item complete">
-                    <div className="status-dot"></div>
-                    <span>Property Search</span>
-                  </div>
-                )}
-                {listing?.agent.email && (
-                  <div className="status-item complete">
-                    <div className="status-dot"></div>
-                    <span>Contact Found</span>
-                  </div>
-                )}
-                {emailDraft && (
-                  <div className="status-item complete">
-                    <div className="status-dot"></div>
-                    <span>Email & Invite Staged</span>
-                  </div>
-                )}
-                {authenticated && emailDraft && listing?.agent.email && (
-                  <div className="status-item complete">
-                    <div className="status-dot"></div>
-                    <span>Microsoft Authenticated</span>
-                  </div>
-                )}
-                {userWalletAddress && (
-                  <div className="status-item complete">
-                    <div className="status-dot"></div>
-                    <span>Wallet Connected</span>
-                  </div>
-                )}
-              </div>
-            </div>
-            {listing && (
-              <div className="listing-panel">
-                <h3 className="panel-title">🏠 Selected Property</h3>
-                <p>
-                  <strong>Address:</strong> {listing.address}
-                </p>
-                <p>
-                  <strong>Price:</strong> ${listing.price.toLocaleString()}/month
-                </p>
-                <p>
-                  <strong>Beds / Baths:</strong> {listing.bedrooms} bed / {listing.bathrooms} bath
-                </p>
-                <p>
-                  <strong>Type:</strong> {listing.propertyType}
-                </p>
-                <p>
-                  <strong>Listing:</strong>{" "}
-                  {listing.detailUrl !== "#" ? (
-                    <a
-                      href={formatUrl(listing.detailUrl)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="agent-link"
-                    >
-                      View Agent Site
-                    </a>
-                  ) : (
-                    <span style={{ color: "#d1d5db" }}>No agent site available</span>
-                  )}
-                </p>
-              </div>
-            )}
           </div>
         </div>
 
-        <div className="listings-section">
-          <h3 className="listings-title">Your Best Matches</h3>
-          <p className="listings-subtitle">Make a more detailed prompt to get a better match.</p>
-          <div className="listings-grid">
-            <ListingCard
-              list={testListing}
-              handleGenerateDraft={handleGenerateDraft}
-              listingDrafts={listingDrafts}
-              calendarTime={calendarTime}
-              setCalendarTime={setCalendarTime}
-              authenticated={authenticated}
-              handleLogin={handleLogin}
-              sendEmailAndCreateInvite={sendEmailAndCreateInvite}
-              finalActionLoading={finalActionLoading}
-              handleDeposit={handleDeposit}
-              handleFundWallet={handleFundWallet}
-              isFundingWallet={isFundingWallet}
-            />
-            {allListings.slice(0, showAllListings ? allListings.length : 3).map((list, index) => (
+        <div className="sidebar">
+          <div className="status-panel">
+            <h3 className="panel-title">⚡ Progress</h3>
+            <div className="status-items">
+              {listing && <div className="status-item complete"><div className="status-dot"></div><span>Property Search</span></div>}
+              {listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Contact Found</span></div>}
+              {emailDraft && <div className="status-item complete"><div className="status-dot"></div><span>Email & Invite Staged</span></div>}
+              {authenticated && emailDraft && listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Authenticated to Send</span></div>}
+              {userWalletAddress && <div className="status-item complete"><div className="status-dot"></div><span>Wallet Connected</span></div>}
+            </div>
+          </div>
+          {listing && (
+            <div className="listing-panel">
+              <h3 className="panel-title">🏠 Selected Property</h3>
+              <p><strong>Address:</strong> {listing.address}</p>
+              <p><strong>Price:</strong> ${listing.price.toLocaleString()}/month</p>
+              <p><strong>Beds / Baths:</strong> {listing.bedrooms} bed / {listing.bathrooms} bath</p>
+              <p><strong>Type:</strong> {listing.propertyType}</p>
+              <p>
+                <strong>Listing:</strong>{" "}
+                {listing.detailUrl !== "#" ? (
+                  <a href={formatUrl(listing.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
+                    View Agent Site
+                  </a>
+                ) : (
+                  <span style={{ color: "#d1d5db" }}>No agent site available</span>
+                )}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="listings-section">
+        <h3 className="listings-title">Your Best Matches</h3>
+        <p className="listings-subtitle">Make a more detailed prompt to get a better match.</p>
+        <div className="listings-grid">
+          <ListingCard
+            list={testListing}
+            handleGenerateDraft={handleGenerateDraft}
+            listingDrafts={listingDrafts}
+            calendarTime={calendarTime}
+            setCalendarTime={setCalendarTime}
+            authenticated={authenticated}
+            handleLogin={handleLogin}
+            sendEmailAndCreateInvite={sendEmailAndCreateInvite}
+            finalActionLoading={finalActionLoading}
+            handleDeposit={handleDeposit}
+          />
+          {allListings
+            .slice(0, showAllListings ? allListings.length : 3)
+            .map((list, index) => (
               <ListingCard
                 key={index}
                 list={list}
@@ -1242,20 +1002,14 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
                 sendEmailAndCreateInvite={sendEmailAndCreateInvite}
                 finalActionLoading={finalActionLoading}
                 handleDeposit={handleDeposit}
-                handleFundWallet={handleFundWallet}
-                isFundingWallet={isFundingWallet}
               />
             ))}
-          </div>
-          {allListings.length > 3 && (
-            <button
-              onClick={() => setShowAllListings(!showAllListings)}
-              className="see-more-button"
-            >
-              {showAllListings ? "Show Less" : `See More (${allListings.length - 3} more)`}
-            </button>
-          )}
         </div>
+        {allListings.length > 3 && (
+          <button onClick={() => setShowAllListings(!showAllListings)} className="see-more-button">
+            {showAllListings ? "Show Less" : `See More (${allListings.length - 3} more)`}
+          </button>
+        )}
       </div>
 
       {emailDraft && (
@@ -1270,54 +1024,45 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
                   ? "Review the email and calendar invite."
                   : "Authorize Microsoft to send or copy the draft below."}
               </div>
-              <textarea
-                className="email-textarea"
-                value={emailDraft}
-                onChange={(e) => setEmailDraft(e.target.value)}
-              />
+              <textarea className="email-textarea" value={emailDraft} onChange={(e) => setEmailDraft(e.target.value)} />
             </div>
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
-export default function ClientPage() {
-  const [queryClient, setQueryClient] = useState<QueryClient | null>(null);
-  const [isMounted, setIsMounted] = useState(false);
+// Export the top-level Page component with providers wrapping Home
+export default function Page() {
+  // Define wagmi config here
+  const config = createConfig({
+    chains: [base],
+    connectors: [
+      coinbaseWallet({
+        appName: "Rental AI Assistant",
+        preference: "smartWalletOnly",
+      }),
+    ],
+    transports: {
+      [base.id]: http(),
+    },
+  });
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setQueryClient(
-        new QueryClient({
-          defaultOptions: {
-            queries: {
-              enabled: true,
-            },
-          },
-        })
-      );
-      setIsMounted(true);
-    }
-  }, []);
-
-  if (!isMounted || !queryClient) {
-    return <div>Loading...</div>;
-  }
+  const handleWalletConnect = (address: string) => {
+    // This function will be passed to Web3Wrapper
+    // You can add additional logic here if needed
+  };
 
   return (
-    <Suspense fallback={<div>Loading app...</div>}>
+    <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <AppOnchainProvider>
-          <Web3Wrapper onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)}>
-            <div className="wallet-status">
-              <ConnectWalletButton onConnect={(address) => console.log(`Wallet connected: ${address}`)} />
-            </div>
-            <Home onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)} />
+          <Web3Wrapper onWalletConnect={handleWalletConnect}>
+            <Home />
           </Web3Wrapper>
         </AppOnchainProvider>
       </QueryClientProvider>
-    </Suspense>
+    </WagmiProvider>
   );
 }
