@@ -606,3 +606,18 @@ connect-wallet-button {
     background-color: #93c5fd;
     cursor: not-allowed;
 }
+
+.onramp-button {
+    background-color: #3b82f6;
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    margin-top: 0.5rem;
+    width: 100%;
+    text-align: center;
+    cursor: pointer;
+}
+
+.onramp-button:hover {
+    background-color: #2563eb;
+}

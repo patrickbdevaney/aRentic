@@ -9,7 +9,7 @@ import { ethers, BrowserProvider } from "ethers";
 import { AppOnchainProvider } from "@/components/OnchainProvider";
 import { sendUsdcToDeposit } from "@/lib/escrow";
 import jsPDF from "jspdf";
-import { createConfig, http, WagmiProvider } from "wagmi"; // Added WagmiProvider and createConfig
+import { createConfig, http, WagmiProvider } from "wagmi";
 import { base } from "wagmi/chains";
 import { coinbaseWallet } from "wagmi/connectors";
 import "./styles.css";
@@ -105,13 +105,13 @@ const usStates = [
 ];
 
 const cityAliases: { [key: string]: { city: string; state: string } } = {
-  "nyc": { city: "New York", state: "NY" },
+  nyc: { city: "New York", state: "NY" },
   "new york": { city: "New York", state: "NY" },
-  "ny": { city: "New York", state: "NY" },
-  "la": { city: "Los Angeles", state: "CA" },
-  "sf": { city: "San Francisco", state: "CA" },
-  "chicago": { city: "Chicago", state: "IL" },
-  "miami": { city: "Miami", state: "FL" },
+  ny: { city: "New York", state: "NY" },
+  la: { city: "Los Angeles", state: "CA" },
+  sf: { city: "San Francisco", state: "CA" },
+  chicago: { city: "Chicago", state: "IL" },
+  miami: { city: "Miami", state: "FL" },
 };
 
 const msalConfig = {
@@ -162,6 +162,20 @@ const getStreetViewUrl = (address: string) => {
   console.log("Street View API Route URL:", url);
   return url;
 };
+
+// Function to generate Coinbase Onramp URL
+const getOnrampUrl = (address: string, amount: number, network: string = "base") => {
+  const params = new URLSearchParams({
+    appId: process.env.NEXT_PUBLIC_CDP_PROJECT_ID || "",
+    destination: address,
+    presetFiatAmount: amount.toString(),
+    fiatCurrency: "USD",
+    assets: "USDC",
+    network,
+  });
+  return `https://pay.coinbase.com/buy?${params.toString()}`;
+};
+
 // Custom hook to convert WalletClient to ethers.Signer
 const useEthersSigner = () => {
   const { data: walletClient } = useWalletClient();
@@ -169,7 +183,6 @@ const useEthersSigner = () => {
 
   useEffect(() => {
     if (walletClient) {
-      // Use base chain configuration for Base Mainnet
       const provider = new BrowserProvider(walletClient.transport, base);
       provider.getSigner().then(setSigner).catch((error) => {
         console.error("Failed to get signer:", error);
@@ -202,7 +215,6 @@ function Web3Wrapper({ children, onWalletConnect }: { children: React.ReactNode;
           <button
             onClick={() => {
               // Trigger wallet connection via OnchainKit modal
-              // Note: This relies on OnchainKitProvider handling the modal
             }}
             className="connect-wallet-button"
           >
@@ -227,6 +239,7 @@ function ListingCard({
   sendEmailAndCreateInvite,
   finalActionLoading,
   handleDeposit,
+  userWalletAddress,
 }: {
   list: Listing;
   handleGenerateDraft: (listing: Listing) => void;
@@ -238,6 +251,7 @@ function ListingCard({
   sendEmailAndCreateInvite: (listing: Listing, draft: string, eventTime: string) => void;
   finalActionLoading: { [key: string]: boolean };
   handleDeposit: (listingId: string, amountUSD: string) => void;
+  userWalletAddress: string | null;
 }) {
   const [imageUrl, setImageUrl] = useState<string>("/fallback-image.jpg");
 
@@ -255,23 +269,11 @@ function ListingCard({
           e.currentTarget.src = "/fallback-image.jpg";
         }}
       />
-      <p>
-        <strong>Address:</strong> {list.address}
-      </p>
-      <p>
-        <strong>Price:</strong> ${list.price.toLocaleString()}/month
-      </p>
-      <p>
-        <strong>Beds / Baths:</strong> {list.bedrooms} bed / {list.bathrooms} bath
-      </p>
-      <p>
-        <strong>Type:</strong> {list.propertyType}
-      </p>
-      {list.livingArea > 0 && (
-        <p>
-          <strong>Area:</strong> {list.livingArea.toLocaleString()} sq ft
-        </p>
-      )}
+      <p><strong>Address:</strong> {list.address}</p>
+      <p><strong>Price:</strong> ${list.price.toLocaleString()}/month</p>
+      <p><strong>Beds / Baths:</strong> {list.bedrooms} bed / {list.bathrooms} bath</p>
+      <p><strong>Type:</strong> {list.propertyType}</p>
+      {list.livingArea > 0 && <p><strong>Area:</strong> {list.livingArea.toLocaleString()} sq ft</p>}
       <p>
         <strong>Listing:</strong>{" "}
         {list.detailUrl !== "#" ? (
@@ -285,6 +287,14 @@ function ListingCard({
       <button className="generate-draft-button" onClick={() => handleGenerateDraft(list)}>
         📝 Generate Email Draft
       </button>
+      {userWalletAddress && (
+        <button
+          className="onramp-button"
+          onClick={() => window.open(getOnrampUrl(userWalletAddress, list.price * 0.15, "base"), "_blank")}
+        >
+          💸 Fund Wallet
+        </button>
+      )}
       {listingDrafts[list.id] && (
         <div className="draft-container">
           <textarea className="draft-textarea" value={listingDrafts[list.id]} readOnly />
@@ -603,6 +613,7 @@ function Home() {
         timeZone: "America/New_York",
       });
       const userEmail = authenticated && account?.username ? account.username : "";
+      const contractText = `Generic Rental Contract\nProperty Address: ${listing.address}\nParties: Tenant [Your Name], Landlord [${listing.agent.name}]\nTerms: Monthly rent $${listing.price}, 12-month lease\nSignature: ________________________ Date: __________`;
       const prompt = `Generate a professional, concise inquiry email for a rental property to maximize inbox delivery and avoid spam filters.
       - Agent Name: ${listing.agent.name}
       - Property Address: ${listing.address}
@@ -611,6 +622,7 @@ function Home() {
       - Mention a tentative calendar invite sent for a specific time (${formattedTime} EDT) to discuss the property or schedule a virtual tour, noting flexibility to reschedule if needed.
       - Request options for an in-person or virtual viewing.
       - Ask about the next steps in the rental process.
+      - Append the following lease contract text at the end of the email after two new lines: "${contractText}"
       - Use a salutation with the agent's name (e.g., 'Dear ${listing.agent.name},').
       - End with 'Best regards,' followed by two new lines and the user's email address (${userEmail}) if provided, otherwise no signature.
       - Use clear, neutral language, avoiding trigger words like 'free', 'win', or 'now' to reduce spam risk.
@@ -796,8 +808,7 @@ function Home() {
     setEmailDraft(draft);
     setChat((prev) => [
       ...prev,
-      `📝 Draft generated for ${selectedListing.address}. ${selectedListing.agent.email ? "Select a time and authenticate to send." : "No agent email found."
-      }`,
+      `📝 Draft generated for ${selectedListing.address}. ${selectedListing.agent.email ? "Select a time and authenticate to send." : "No agent email found."}`,
     ]);
   };
 
@@ -945,7 +956,9 @@ function Home() {
               {listing && <div className="status-item complete"><div className="status-dot"></div><span>Property Search</span></div>}
               {listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Contact Found</span></div>}
               {emailDraft && <div className="status-item complete"><div className="status-dot"></div><span>Email & Invite Staged</span></div>}
-              {authenticated && emailDraft && listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Authenticated to Send</span></div>}
+              {authenticated && emailDraft && listing?.agent.email && (
+                <div className="status-item complete"><div className="status-dot"></div><span>Authenticated to Send</span></div>
+              )}
               {userWalletAddress && <div className="status-item complete"><div className="status-dot"></div><span>Wallet Connected</span></div>}
             </div>
           </div>
@@ -986,24 +999,24 @@ function Home() {
             sendEmailAndCreateInvite={sendEmailAndCreateInvite}
             finalActionLoading={finalActionLoading}
             handleDeposit={handleDeposit}
+            userWalletAddress={userWalletAddress}
           />
-          {allListings
-            .slice(0, showAllListings ? allListings.length : 3)
-            .map((list, index) => (
-              <ListingCard
-                key={index}
-                list={list}
-                handleGenerateDraft={handleGenerateDraft}
-                listingDrafts={listingDrafts}
-                calendarTime={calendarTime}
-                setCalendarTime={setCalendarTime}
-                authenticated={authenticated}
-                handleLogin={handleLogin}
-                sendEmailAndCreateInvite={sendEmailAndCreateInvite}
-                finalActionLoading={finalActionLoading}
-                handleDeposit={handleDeposit}
-              />
-            ))}
+          {allListings.slice(0, showAllListings ? allListings.length : 3).map((list, index) => (
+            <ListingCard
+              key={index}
+              list={list}
+              handleGenerateDraft={handleGenerateDraft}
+              listingDrafts={listingDrafts}
+              calendarTime={calendarTime}
+              setCalendarTime={setCalendarTime}
+              authenticated={authenticated}
+              handleLogin={handleLogin}
+              sendEmailAndCreateInvite={sendEmailAndCreateInvite}
+              finalActionLoading={finalActionLoading}
+              handleDeposit={handleDeposit}
+              userWalletAddress={userWalletAddress}
+            />
+          ))}
         </div>
         {allListings.length > 3 && (
           <button onClick={() => setShowAllListings(!showAllListings)} className="see-more-button">
@@ -1035,7 +1048,6 @@ function Home() {
 
 // Export the top-level Page component with providers wrapping Home
 export default function Page() {
-  // Define wagmi config here
   const config = createConfig({
     chains: [base],
     connectors: [
@@ -1050,8 +1062,7 @@ export default function Page() {
   });
 
   const handleWalletConnect = (address: string) => {
-    // This function will be passed to Web3Wrapper
-    // You can add additional logic here if needed
+    // Logic handled in Web3Wrapper and Home
   };
 
   return (
