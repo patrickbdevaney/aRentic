@@ -1,21 +1,11 @@
-"use client";
+// app/ClientPage.tsx
+"use client"; // Mark as Client Component
 
-import { useState, useEffect, ReactNode } from "react";
+import { useState, useEffect, ReactNode, Suspense } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import CoinbaseWalletSDK from "@coinbase/wallet-sdk";
 import { AppOnchainProvider } from "@/components/OnchainProvider";
 import { sendUsdcToDeposit } from "@/lib/escrow";
 import "./styles.css";
-
-// Force dynamic rendering to avoid prerendering issues
-export const dynamic = "force-dynamic";
-
-// Initialize Coinbase Wallet SDK
-const coinbaseWallet = new CoinbaseWalletSDK({
-  appName: "aRentic",
-  appLogoUrl: "/logo-48.png",
-  appChainIds: [8453], // Base chain ID
-});
 
 // Define interfaces for TypeScript
 interface Listing {
@@ -111,7 +101,6 @@ const cityAliases: { [key: string]: { city: string; state: string } } = {
   miami: { city: "Miami", state: "FL" },
 };
 
-// MSAL and Groq instances (loaded dynamically)
 const msalConfig = {
   auth: {
     clientId: process.env.NEXT_PUBLIC_AZURE_CLIENT_ID || "",
@@ -122,7 +111,7 @@ const msalConfig = {
 
 const msalScopes = ["Calendars.ReadWrite", "Mail.Send"];
 
-// Dynamically import heavy dependencies
+// Dynamically load heavy dependencies
 const loadMsal = async () => {
   console.log("Loading MSAL...");
   const { PublicClientApplication, InteractionRequiredAuthError } = await import("@azure/msal-browser");
@@ -147,13 +136,25 @@ const loadJsPDF = async () => {
   return jsPDF;
 };
 
-// Custom ConnectWalletButton component
+// Dynamically load CoinbaseWalletSDK
+const loadCoinbaseSDK = async () => {
+  console.log("Loading Coinbase Wallet SDK...");
+  const { default: CoinbaseWalletSDK } = await import("@coinbase/wallet-sdk");
+  return new CoinbaseWalletSDK({
+    appName: "aRentic",
+    appLogoUrl: "/logo-48.png",
+    appChainIds: [8453], // Base chain ID
+  });
+};
+
+// ConnectWalletButton component
 const ConnectWalletButton = ({ onConnect }: { onConnect: (address: string) => void }) => {
   const [isConnecting, setIsConnecting] = useState(false);
 
   const handleConnect = async () => {
     setIsConnecting(true);
     try {
+      const coinbaseWallet = await loadCoinbaseSDK();
       const provider = coinbaseWallet.makeWeb3Provider();
       const accounts = (await provider.request({
         method: "eth_requestAccounts",
@@ -193,6 +194,7 @@ function Web3Wrapper({
   useEffect(() => {
     const checkConnection = async () => {
       try {
+        const coinbaseWallet = await loadCoinbaseSDK();
         const provider = coinbaseWallet.makeWeb3Provider();
         const accounts = (await provider.request({
           method: "eth_accounts",
@@ -421,6 +423,7 @@ const useEthersSigner = () => {
     const initializeSigner = async () => {
       console.log("Initializing signer...");
       try {
+        const coinbaseWallet = await loadCoinbaseSDK();
         const provider = coinbaseWallet.makeWeb3Provider();
         const { BrowserProvider } = await loadEthers();
         const ethersProvider = new BrowserProvider(provider);
@@ -442,6 +445,7 @@ const useEthersSigner = () => {
 const useSignMessage = () => {
   const signMessageAsync = async ({ message }: { message: string }) => {
     try {
+      const coinbaseWallet = await loadCoinbaseSDK();
       const provider = coinbaseWallet.makeWeb3Provider();
       const accounts = (await provider.request({
         method: "eth_accounts",
@@ -491,14 +495,12 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   const signer = useEthersSigner();
   const { signMessageAsync } = useSignMessage();
 
-  // Update wallet address when connected
   useEffect(() => {
     if (userWalletAddress) {
       onWalletConnect(userWalletAddress);
     }
   }, [userWalletAddress, onWalletConnect]);
 
-  // Initialize MSAL
   useEffect(() => {
     const initMsal = async () => {
       if (typeof window === "undefined") return;
@@ -529,7 +531,6 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     initMsal();
   }, [listing]);
 
-  // Regenerate email draft when calendarTime changes
   useEffect(() => {
     if (listing && listing.agent.email) {
       generateInquiryDraft(listing).then((draft) => {
@@ -540,7 +541,6 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     }
   }, [calendarTime, listing]);
 
-  // Store wallet address in Supabase after Coinbase authentication
   useEffect(() => {
     if (authenticated && account?.username && userWalletAddress) {
       const linkWallet = async () => {
@@ -1283,19 +1283,17 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   );
 }
 
-// Export the top-level Page component with providers wrapping Home
-export default function Page() {
+export default function ClientPage() {
   const [queryClient, setQueryClient] = useState<QueryClient | null>(null);
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
-    // Initialize QueryClient only on the client side
     if (typeof window !== "undefined") {
       setQueryClient(
         new QueryClient({
           defaultOptions: {
             queries: {
-              enabled: true, // Queries will only run client-side
+              enabled: true,
             },
           },
         })
@@ -1304,21 +1302,22 @@ export default function Page() {
     }
   }, []);
 
-  // Render nothing until mounted to avoid server-side execution
   if (!isMounted || !queryClient) {
-    return null;
+    return <div>Loading...</div>;
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <AppOnchainProvider>
-        <Web3Wrapper onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)}>
-          <div className="wallet-status">
-            <ConnectWalletButton onConnect={(address) => console.log(`Wallet connected: ${address}`)} />
-          </div>
-          <Home onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)} />
-        </Web3Wrapper>
-      </AppOnchainProvider>
-    </QueryClientProvider>
+    <Suspense fallback={<div>Loading app...</div>}>
+      <QueryClientProvider client={queryClient}>
+        <AppOnchainProvider>
+          <Web3Wrapper onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)}>
+            <div className="wallet-status">
+              <ConnectWalletButton onConnect={(address) => console.log(`Wallet connected: ${address}`)} />
+            </div>
+            <Home onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)} />
+          </Web3Wrapper>
+        </AppOnchainProvider>
+      </QueryClientProvider>
+    </Suspense>
   );
 }
