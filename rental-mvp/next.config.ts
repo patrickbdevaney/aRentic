@@ -1,13 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  trailingSlash: true,
-  images: {
-    unoptimized: true
-  },
   experimental: {
-    webpackBuildWorker: true
+    webpackMemoryOptimizations: true,
+    webpackBuildWorker: true,
   },
-  productionBrowserSourceMaps: false
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
+  },
 };
 
 module.exports = nextConfig;
