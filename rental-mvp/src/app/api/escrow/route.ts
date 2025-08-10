@@ -1,5 +1,3 @@
-// api/escrow/route.ts (Updated to handle userAddress from signer)
-
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
@@ -10,9 +8,19 @@ const supabase = createClient(
 
 export async function POST(req: NextRequest) {
     try {
-        const { listingId, txHash, amountUSD, email } = await req.json();
-        const walletAddress = process.env.NEXT_PUBLIC_ESCROW_ADDRESS;
+        const { listingId, txHash, amountUSD, email, walletAddress } = await req.json();
 
+        // Upsert user in users table
+        const { error: userError } = await supabase
+            .from('users')
+            .upsert(
+                { email, wallet_address: walletAddress, created_at: new Date().toISOString() },
+                { onConflict: 'email' }
+            );
+
+        if (userError) throw userError;
+
+        // Insert deposit
         const { data, error } = await supabase
             .from('deposits')
             .insert([
@@ -20,8 +28,9 @@ export async function POST(req: NextRequest) {
                     listing_id: listingId,
                     amount: amountUSD,
                     user_email: email,
+                    wallet_address: walletAddress,
                     tx_hash: txHash,
-                    escrow_address: walletAddress,
+                    escrow_address: process.env.NEXT_PUBLIC_ESCROW_ADDRESS,
                     created_at: new Date().toISOString(),
                     status: 'pending',
                 },
