@@ -157,13 +157,11 @@ const getDefaultBusinessTime = (): string => {
 
 // Function to generate Google Street View URL
 const getStreetViewUrl = (address: string) => {
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_STREET_VIEW_API_KEY || "";
   const encodedAddress = encodeURIComponent(address);
-  const url = `https://maps.googleapis.com/maps/api/streetview?size=400x300&location=${encodedAddress}&key=${apiKey}`;
-  console.log("Street View URL:", url);
+  const url = `/api/streetview?address=${encodedAddress}`;
+  console.log("Street View API Route URL:", url);
   return url;
 };
-
 // Custom hook to convert WalletClient to ethers.Signer
 const useEthersSigner = () => {
   const { data: walletClient } = useWalletClient();
@@ -864,13 +862,13 @@ function Home() {
   return (
     <div className="container">
       <div className="header">
-        <h1 className="main-title">🏠 Rental AI Assistant</h1>
+        <h1 className="main-title">🏠 aRentic</h1>
         <p className="subtitle">The smartest way to find and schedule your next rental with crypto escrow.</p>
       </div>
 
       <div className="pre-schedule-section">
         <h3>🗓️ Set Your Weekly Availability</h3>
-        <p>Tell us when you're free, and our AI will schedule viewings for you. (Coming Soon!)</p>
+        <p>Tell us when you're free, and our AI will schedule viewings for you.</p>
       </div>
 
       <div className="main-grid">
