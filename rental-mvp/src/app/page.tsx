@@ -1,14 +1,14 @@
+
 "use client";
 
-import { useState, useEffect, Suspense, ReactNode } from "react";
-import dynamic from "next/dynamic";
+import { useState, useEffect, ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createConfig, http, WagmiProvider, useConnect, useAccount } from "wagmi";
+import { createConfig, http, WagmiProvider, useConnect, useAccount, useSignMessage, useWalletClient } from "wagmi";
 import { base } from "wagmi/chains";
+import { coinbaseWallet } from "@wagmi/connectors";
+import { AppOnchainProvider } from "@/components/OnchainProvider";
+import { sendUsdcToDeposit } from "@/lib/escrow";
 import "./styles.css";
-
-
-import { coinbaseWallet } from "@wagmi/connectors"; // Add this import
 
 // Force dynamic rendering for wallet connection
 export const renderMode = "force-dynamic";
@@ -50,7 +50,55 @@ interface ParsedPrompt {
 const usStates = [
   { code: "AL", name: "Alabama" },
   { code: "AK", name: "Alaska" },
-  // ... (rest of the states, omitted for brevity)
+  // Add remaining states here for completeness
+  { code: "AZ", name: "Arizona" },
+  { code: "AR", name: "Arkansas" },
+  { code: "CA", name: "California" },
+  { code: "CO", name: "Colorado" },
+  { code: "CT", name: "Connecticut" },
+  { code: "DE", name: "Delaware" },
+  { code: "FL", name: "Florida" },
+  { code: "GA", name: "Georgia" },
+  { code: "HI", name: "Hawaii" },
+  { code: "ID", name: "Idaho" },
+  { code: "IL", name: "Illinois" },
+  { code: "IN", name: "Indiana" },
+  { code: "IA", name: "Iowa" },
+  { code: "KS", name: "Kansas" },
+  { code: "KY", name: "Kentucky" },
+  { code: "LA", name: "Louisiana" },
+  { code: "ME", name: "Maine" },
+  { code: "MD", name: "Maryland" },
+  { code: "MA", name: "Massachusetts" },
+  { code: "MI", name: "Michigan" },
+  { code: "MN", name: "Minnesota" },
+  { code: "MS", name: "Mississippi" },
+  { code: "MO", name: "Missouri" },
+  { code: "MT", name: "Montana" },
+  { code: "NE", name: "Nebraska" },
+  { code: "NV", name: "Nevada" },
+  { code: "NH", name: "New Hampshire" },
+  { code: "NJ", name: "New Jersey" },
+  { code: "NM", name: "New Mexico" },
+  { code: "NY", name: "New York" },
+  { code: "NC", name: "North Carolina" },
+  { code: "ND", name: "North Dakota" },
+  { code: "OH", name: "Ohio" },
+  { code: "OK", name: "Oklahoma" },
+  { code: "OR", name: "Oregon" },
+  { code: "PA", name: "Pennsylvania" },
+  { code: "RI", name: "Rhode Island" },
+  { code: "SC", name: "South Carolina" },
+  { code: "SD", name: "South Dakota" },
+  { code: "TN", name: "Tennessee" },
+  { code: "TX", name: "Texas" },
+  { code: "UT", name: "Utah" },
+  { code: "VT", name: "Vermont" },
+  { code: "VA", name: "Virginia" },
+  { code: "WA", name: "Washington" },
+  { code: "WV", name: "West Virginia" },
+  { code: "WI", name: "Wisconsin" },
+  { code: "WY", name: "Wyoming" },
 ];
 
 const cityAliases: { [key: string]: { city: string; state: string } } = {
@@ -76,21 +124,25 @@ const msalScopes = ["Calendars.ReadWrite", "Mail.Send"];
 
 // Dynamically import heavy dependencies
 const loadMsal = async () => {
+  console.log("Loading MSAL...");
   const { PublicClientApplication, InteractionRequiredAuthError } = await import("@azure/msal-browser");
   return { PublicClientApplication, InteractionRequiredAuthError };
 };
 
 const loadGroq = async () => {
+  console.log("Loading Groq SDK...");
   const { Groq } = await import("groq-sdk");
   return new Groq({ apiKey: process.env.NEXT_PUBLIC_GROQ_API_KEY || "", dangerouslyAllowBrowser: true });
 };
 
 const loadEthers = async () => {
+  console.log("Loading Ethers...");
   const { ethers, BrowserProvider } = await import("ethers");
   return { ethers, BrowserProvider };
 };
 
 const loadJsPDF = async () => {
+  console.log("Loading jsPDF...");
   const { default: jsPDF } = await import("jspdf");
   return jsPDF;
 };
@@ -111,11 +163,185 @@ const ConnectWalletButton = () => {
   );
 };
 
-// Dynamic imports for components
-const AppOnchainProvider = dynamic(() => import("@/components/OnchainProvider").then((mod) => mod.AppOnchainProvider), {
-  ssr: false,
-  loading: () => <div>Loading Onchain Provider...</div>,
-});
+// Web3Wrapper component
+function Web3Wrapper({
+  children,
+  onWalletConnect,
+}: {
+  children: ReactNode;
+  onWalletConnect: (address: string) => void;
+}) {
+  const { isConnected, address } = useAccount();
+  const { signMessageAsync } = useSignMessage();
+
+  useEffect(() => {
+    if (isConnected && address) {
+      onWalletConnect(address);
+    }
+  }, [isConnected, address, onWalletConnect]);
+
+  console.log("Web3Wrapper rendered, isConnected:", isConnected);
+  return (
+    <div>
+      {isConnected ? (
+        <p style={{ color: "#22c55e", textAlign: "center" }}>
+          ✅ Wallet Connected: {address}
+        </p>
+      ) : (
+        <div style={{ display: "flex", justifyContent: "center", margin: "1rem 0" }}>
+          <ConnectWalletButton />
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+// ListingCard component
+function ListingCard({
+  list,
+  handleGenerateDraft,
+  listingDrafts,
+  calendarTime,
+  setCalendarTime,
+  authenticated,
+  handleLogin,
+  sendEmailAndCreateInvite,
+  finalActionLoading,
+  handleDeposit,
+  handleFundWallet,
+  isFundingWallet,
+}: {
+  list: Listing;
+  handleGenerateDraft: (listing: Listing) => void;
+  listingDrafts: { [key: string]: string };
+  calendarTime: string;
+  setCalendarTime: (time: string) => void;
+  authenticated: boolean;
+  handleLogin: () => void;
+  sendEmailAndCreateInvite: (listing: Listing, draft: string, eventTime: string) => void;
+  finalActionLoading: { [key: string]: boolean };
+  handleDeposit: (listingId: string, amountUSD: string) => void;
+  handleFundWallet: (amountUSD: string, listingId: string) => void;
+  isFundingWallet: { [key: string]: boolean };
+}) {
+  const [imageUrl, setImageUrl] = useState<string>("/fallback-image.jpg");
+
+  useEffect(() => {
+    setImageUrl(getStreetViewUrl(list.address));
+  }, [list.address]);
+
+  return (
+    <div className="listing-card">
+      <img
+        src={imageUrl}
+        alt={`Street View of ${list.address}`}
+        style={{ width: "100%", height: "200px", objectFit: "cover", borderRadius: "0.5rem" }}
+        onError={(e) => {
+          e.currentTarget.src = "/fallback-image.jpg";
+        }}
+      />
+      <p>
+        <strong>Address:</strong> {list.address}
+      </p>
+      <p>
+        <strong>Price:</strong> ${list.price.toLocaleString()}/month
+      </p>
+      <p>
+        <strong>Beds / Baths:</strong> {list.bedrooms} bed / {list.bathrooms} bath
+      </p>
+      <p>
+        <strong>Type:</strong> {list.propertyType}
+      </p>
+      {list.livingArea > 0 && (
+        <p>
+          <strong>Area:</strong> {list.livingArea.toLocaleString()} sq ft
+        </p>
+      )}
+      <p>
+        <strong>Listing:</strong>{" "}
+        {list.detailUrl !== "#" ? (
+          <a
+            href={formatUrl(list.detailUrl)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="agent-link"
+          >
+            View Agent Site
+          </a>
+        ) : (
+          <span style={{ color: "#d1d5db" }}>No agent site available</span>
+        )}
+      </p>
+      <button
+        className="generate-draft-button"
+        onClick={() => handleGenerateDraft(list)}
+      >
+        📝 Generate Email Draft
+      </button>
+      {listingDrafts[list.id] && (
+        <div className="draft-container">
+          <textarea
+            className="draft-textarea"
+            value={listingDrafts[list.id]}
+            readOnly
+          />
+          <button
+            className="copy-draft-button"
+            onClick={() => {
+              navigator.clipboard.writeText(listingDrafts[list.id]);
+            }}
+          >
+            📋 Copy Draft
+          </button>
+          {list.agent.email && (
+            <>
+              <input
+                type="datetime-local"
+                className="draft-textarea datetime-input"
+                value={calendarTime}
+                onChange={(e) => setCalendarTime(e.target.value)}
+              />
+              {!authenticated ? (
+                <button onClick={handleLogin} className="auth-button">
+                  🔐 Authorize Microsoft to Send
+                </button>
+              ) : (
+                <button
+                  onClick={() =>
+                    sendEmailAndCreateInvite(list, listingDrafts[list.id], calendarTime)
+                  }
+                  className="execute-button"
+                  disabled={finalActionLoading[list.id] || !list.agent.email}
+                >
+                  {finalActionLoading[list.id]
+                    ? "Sending..."
+                    : "🚀 Send Email & Invite"}
+                </button>
+              )}
+              <button
+                onClick={() => handleFundWallet((list.price * 0.15).toFixed(2), list.id)}
+                className="fund-wallet-button"
+                disabled={isFundingWallet[list.id] || !authenticated}
+              >
+                {isFundingWallet[list.id] ? "Funding Wallet..." : "💸 Fund Wallet"}
+              </button>
+              <button
+                onClick={() => handleDeposit(list.id, (list.price * 0.15).toFixed(2))}
+                className="deposit-button"
+                disabled={finalActionLoading[list.id] || !authenticated}
+              >
+                {finalActionLoading[list.id]
+                  ? "Depositing..."
+                  : `💰 Deposit Escrow($${(list.price * 0.15).toFixed(2)})`}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const testListing: Listing = {
   id: "test-listing",
@@ -138,11 +364,11 @@ const testListing: Listing = {
 const getDefaultBusinessTime = (): string => {
   const now = new Date();
   let targetDate = new Date(now);
-  targetDate.setDate(now.getDate() + 3); // 3 days from now
+  targetDate.setDate(now.getDate() + 3);
   const day = targetDate.getDay();
-  if (day === 0) targetDate.setDate(targetDate.getDate() + 1); // Skip Sunday
-  else if (day === 6) targetDate.setDate(targetDate.getDate() + 2); // Skip Saturday
-  targetDate.setHours(14, 0, 0, 0); // Set to 2:00 PM
+  if (day === 0) targetDate.setDate(targetDate.getDate() + 1);
+  else if (day === 6) targetDate.setDate(targetDate.getDate() + 2);
+  targetDate.setHours(14, 0, 0, 0);
   return targetDate.toISOString().split(".")[0];
 };
 
@@ -160,7 +386,7 @@ const useEthersSigner = () => {
 
   useEffect(() => {
     const initializeSigner = async () => {
-      const { useWalletClient } = await import("wagmi");
+      console.log("Initializing signer...");
       const { data: walletClient } = useWalletClient();
       if (walletClient) {
         const { BrowserProvider } = await loadEthers();
@@ -168,6 +394,7 @@ const useEthersSigner = () => {
         try {
           const signer = await provider.getSigner();
           setSigner(signer);
+          console.log("Signer initialized");
         } catch (error) {
           console.error("Failed to get signer:", error);
           setSigner(null);
@@ -181,213 +408,6 @@ const useEthersSigner = () => {
 
   return signer;
 };
-
-// Dynamic import for Web3Wrapper
-const Web3Wrapper = dynamic(
-  () =>
-    import("wagmi").then((wagmi) =>
-      import("react").then((react) => {
-        const { useAccount, useSignMessage } = wagmi;
-        const { useEffect } = react;
-
-        return function Web3Wrapper({
-          children,
-          onWalletConnect,
-        }: {
-          children: ReactNode;
-          onWalletConnect: (address: string) => void;
-        }) {
-          const { isConnected, address } = useAccount();
-          const { signMessageAsync } = useSignMessage();
-
-          useEffect(() => {
-            if (isConnected && address) {
-              onWalletConnect(address);
-            }
-          }, [isConnected, address, onWalletConnect]);
-
-          return (
-            <div>
-              {isConnected ? (
-                <p style={{ color: "#22c55e", textAlign: "center" }}>
-                  ✅ Wallet Connected: {address}
-                </p>
-              ) : (
-                <div style={{ display: "flex", justifyContent: "center", margin: "1rem 0" }}>
-                  <Suspense fallback={<div>Loading Wallet Button...</div>}>
-                    <ConnectWalletButton />
-                  </Suspense>
-                </div>
-              )}
-              {children}
-            </div>
-          );
-        };
-      })
-    ),
-  {
-    ssr: false,
-    loading: () => <div>Loading Wallet Connection...</div>,
-  }
-);
-
-// Dynamic import for ListingCard
-const ListingCard = dynamic(
-  () =>
-    Promise.all([import("react"), import("@/lib/escrow")]).then(([reactMod, escrowMod]) => {
-      const { useState, useEffect } = reactMod;
-      const { sendUsdcToDeposit } = escrowMod;
-
-      return function ListingCard({
-        list,
-        handleGenerateDraft,
-        listingDrafts,
-        calendarTime,
-        setCalendarTime,
-        authenticated,
-        handleLogin,
-        sendEmailAndCreateInvite,
-        finalActionLoading,
-        handleDeposit,
-        handleFundWallet,
-        isFundingWallet,
-      }: {
-        list: Listing;
-        handleGenerateDraft: (listing: Listing) => void;
-        listingDrafts: { [key: string]: string };
-        calendarTime: string;
-        setCalendarTime: (time: string) => void;
-        authenticated: boolean;
-        handleLogin: () => void;
-        sendEmailAndCreateInvite: (listing: Listing, draft: string, eventTime: string) => void;
-        finalActionLoading: { [key: string]: boolean };
-        handleDeposit: (listingId: string, amountUSD: string) => void;
-        handleFundWallet: (amountUSD: string, listingId: string) => void;
-        isFundingWallet: { [key: string]: boolean };
-      }) {
-        const [imageUrl, setImageUrl] = useState<string>("/fallback-image.jpg");
-
-        useEffect(() => {
-          setImageUrl(getStreetViewUrl(list.address));
-        }, [list.address]);
-
-        return (
-          <div className="listing-card">
-            <img
-              src={imageUrl}
-              alt={`Street View of ${list.address}`}
-              style={{ width: "100%", height: "200px", objectFit: "cover", borderRadius: "0.5rem" }}
-              onError={(e) => {
-                e.currentTarget.src = "/fallback-image.jpg";
-              }}
-            />
-            <p>
-              <strong>Address:</strong> {list.address}
-            </p>
-            <p>
-              <strong>Price:</strong> ${list.price.toLocaleString()}/month
-            </p>
-            <p>
-              <strong>Beds / Baths:</strong> {list.bedrooms} bed / {list.bathrooms} bath
-            </p>
-            <p>
-              <strong>Type:</strong> {list.propertyType}
-            </p>
-            {list.livingArea > 0 && (
-              <p>
-                <strong>Area:</strong> {list.livingArea.toLocaleString()} sq ft
-              </p>
-            )}
-            <p>
-              <strong>Listing:</strong>{" "}
-              {list.detailUrl !== "#" ? (
-                <a
-                  href={formatUrl(list.detailUrl)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="agent-link"
-                >
-                  View Agent Site
-                </a>
-              ) : (
-                <span style={{ color: "#d1d5db" }}>No agent site available</span>
-              )}
-            </p>
-            <button
-              className="generate-draft-button"
-              onClick={() => handleGenerateDraft(list)}
-            >
-              📝 Generate Email Draft
-            </button>
-            {listingDrafts[list.id] && (
-              <div className="draft-container">
-                <textarea
-                  className="draft-textarea"
-                  value={listingDrafts[list.id]}
-                  readOnly
-                />
-                <button
-                  className="copy-draft-button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(listingDrafts[list.id]);
-                  }}
-                >
-                  📋 Copy Draft
-                </button>
-                {list.agent.email && (
-                  <>
-                    <input
-                      type="datetime-local"
-                      className="draft-textarea datetime-input"
-                      value={calendarTime}
-                      onChange={(e) => setCalendarTime(e.target.value)}
-                    />
-                    {!authenticated ? (
-                      <button onClick={handleLogin} className="auth-button">
-                        🔐 Authorize Microsoft to Send
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() =>
-                          sendEmailAndCreateInvite(list, listingDrafts[list.id], calendarTime)
-                        }
-                        className="execute-button"
-                        disabled={finalActionLoading[list.id] || !list.agent.email}
-                      >
-                        {finalActionLoading[list.id]
-                          ? "Sending..."
-                          : "🚀 Send Email & Invite"}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleFundWallet((list.price * 0.15).toFixed(2), list.id)}
-                      className="fund-wallet-button"
-                      disabled={isFundingWallet[list.id] || !authenticated}
-                    >
-                      {isFundingWallet[list.id] ? "Funding Wallet..." : "💸 Fund Wallet"}
-                    </button>
-                    <button
-                      onClick={() => handleDeposit(list.id, (list.price * 0.15).toFixed(2))}
-                      className="deposit-button"
-                      disabled={finalActionLoading[list.id] || !authenticated}
-                    >
-                      {finalActionLoading[list.id]
-                        ? "Depositing..."
-                        : `💰 Deposit Escrow($${(list.price * 0.15).toFixed(2)})`}
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      };
-    }),
-  {
-    ssr: false,
-    loading: () => <div>Loading Listing Card...</div>,
-  }
-);
 
 // Function to format URL with protocol if missing
 const formatUrl = (url: string) => {
@@ -475,7 +495,6 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     if (authenticated && account?.username && userWalletAddress) {
       const linkWallet = async () => {
         try {
-          const { useSignMessage } = await import("wagmi");
           const { signMessageAsync } = useSignMessage();
           const message = `Link wallet ${userWalletAddress} to ${account.username}`;
           const signature = await signMessageAsync({ message });
@@ -895,13 +914,11 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     setEmailDraft(draft);
     setChat((prev) => [
       ...prev,
-      `📝 Draft generated for ${selectedListing.address}. ${selectedListing.agent.email ? "Select a time and authenticate to send." : "No agent email found."
-      }`,
+      `📝 Draft generated for ${selectedListing.address}. ${selectedListing.agent.email ? "Select a time and authenticate to send." : "No agent email found."}`,
     ]);
   };
 
   const handleDeposit = async (listingId: string, amountUSD: string) => {
-    const signer = await useEthersSigner();
     if (!signer || !userWalletAddress || !authenticated) {
       setChat((prev) => [...prev, "⚠️ Please authenticate with Microsoft and Coinbase to deposit."]);
       return;
@@ -911,14 +928,12 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
 
     try {
       const { ethers } = await loadEthers();
-      const { sendUsdcToDeposit } = await import("@/lib/escrow");
-      const { useSignMessage } = await import("wagmi");
       const { signMessageAsync } = useSignMessage();
 
       // Check USDC balance
       const provider = signer.provider || new ethers.JsonRpcProvider(process.env.BASE_RPC_URL || "https://mainnet.base.org");
       const usdcContract = new ethers.Contract(
-        process.env.NEXT_PUBLIC_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // Base Mainnet USDC
+        process.env.NEXT_PUBLIC_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         ["function balanceOf(address) view returns (uint256)", "function decimals() view returns (uint8)"],
         signer
       );
@@ -1155,9 +1170,24 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
         <h3 className="listings-title">Your Best Matches</h3>
         <p className="listings-subtitle">Make a more detailed prompt to get a better match.</p>
         <div className="listings-grid">
-          <Suspense fallback={<div>Loading Listing Card...</div>}>
+          <ListingCard
+            list={testListing}
+            handleGenerateDraft={handleGenerateDraft}
+            listingDrafts={listingDrafts}
+            calendarTime={calendarTime}
+            setCalendarTime={setCalendarTime}
+            authenticated={authenticated}
+            handleLogin={handleLogin}
+            sendEmailAndCreateInvite={sendEmailAndCreateInvite}
+            finalActionLoading={finalActionLoading}
+            handleDeposit={handleDeposit}
+            handleFundWallet={handleFundWallet}
+            isFundingWallet={isFundingWallet}
+          />
+          {allListings.slice(0, showAllListings ? allListings.length : 3).map((list, index) => (
             <ListingCard
-              list={testListing}
+              key={index}
+              list={list}
               handleGenerateDraft={handleGenerateDraft}
               listingDrafts={listingDrafts}
               calendarTime={calendarTime}
@@ -1170,24 +1200,6 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
               handleFundWallet={handleFundWallet}
               isFundingWallet={isFundingWallet}
             />
-          </Suspense>
-          {allListings.slice(0, showAllListings ? allListings.length : 3).map((list, index) => (
-            <Suspense key={index} fallback={<div>Loading Listing Card...</div>}>
-              <ListingCard
-                list={list}
-                handleGenerateDraft={handleGenerateDraft}
-                listingDrafts={listingDrafts}
-                calendarTime={calendarTime}
-                setCalendarTime={setCalendarTime}
-                authenticated={authenticated}
-                handleLogin={handleLogin}
-                sendEmailAndCreateInvite={sendEmailAndCreateInvite}
-                finalActionLoading={finalActionLoading}
-                handleDeposit={handleDeposit}
-                handleFundWallet={handleFundWallet}
-                isFundingWallet={isFundingWallet}
-              />
-            </Suspense>
           ))}
         </div>
         {allListings.length > 3 && (
@@ -1241,26 +1253,17 @@ export default function Page() {
   });
 
   return (
-    <div>
-      <WagmiProvider config={config}>
-        <QueryClientProvider client={queryClient}>
-          {/* Render Home first for static content */}
-          <Home onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)} />
-          {/* Wrap on-chain components in Suspense */}
-          <Suspense fallback={<div className="loading">Loading Onchain Provider...</div>}>
-            <AppOnchainProvider>
-              <Suspense fallback={<div className="loading">Loading Wallet Connection...</div>}>
-                <Web3Wrapper onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)}>
-                  {/* Provide children to Web3Wrapper */}
-                  <div className="wallet-status">
-                    <ConnectWalletButton />
-                  </div>
-                </Web3Wrapper>
-              </Suspense>
-            </AppOnchainProvider>
-          </Suspense>
-        </QueryClientProvider>
-      </WagmiProvider>
-    </div>
+    <WagmiProvider config={config}>
+      <QueryClientProvider client={queryClient}>
+        <AppOnchainProvider>
+          <Web3Wrapper onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)}>
+            <div className="wallet-status">
+              <ConnectWalletButton />
+            </div>
+            <Home onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)} />
+          </Web3Wrapper>
+        </AppOnchainProvider>
+      </QueryClientProvider>
+    </WagmiProvider>
   );
 }
