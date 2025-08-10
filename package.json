@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "vercel-build": "next build"
+    "vercel-build": "NODE_OPTIONS=--max-old-space-size=4096 next build"
   },
   "dependencies": {
     "@azure/msal-browser": "^4.16.0",
