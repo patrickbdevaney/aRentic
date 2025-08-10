@@ -1244,11 +1244,17 @@ export default function Page() {
     <div>
       <WagmiProvider config={config}>
         <QueryClientProvider client={queryClient}>
-          <Suspense fallback={<div>Loading Onchain Provider...</div>}>
+          {/* Render Home first for static content */}
+          <Home onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)} />
+          {/* Wrap on-chain components in Suspense */}
+          <Suspense fallback={<div className="loading">Loading Onchain Provider...</div>}>
             <AppOnchainProvider>
-              <Suspense fallback={<div>Loading Wallet Connection...</div>}>
+              <Suspense fallback={<div className="loading">Loading Wallet Connection...</div>}>
                 <Web3Wrapper onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)}>
-                  <Home onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)} />
+                  {/* Provide children to Web3Wrapper */}
+                  <div className="wallet-status">
+                    <ConnectWalletButton />
+                  </div>
                 </Web3Wrapper>
               </Suspense>
             </AppOnchainProvider>
