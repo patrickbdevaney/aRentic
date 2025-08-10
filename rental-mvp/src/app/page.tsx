@@ -1,17 +1,14 @@
 "use client";
 
 import { useState, useEffect, ReactNode } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, HydrationBoundary } from "@tanstack/react-query";
 import CoinbaseWalletSDK from "@coinbase/wallet-sdk";
 import { AppOnchainProvider } from "@/components/OnchainProvider";
 import { sendUsdcToDeposit } from "@/lib/escrow";
 import "./styles.css";
 
-// Force dynamic rendering for wallet connection
-export const renderMode = "force-dynamic";
-
-// Create QueryClient instance
-const queryClient = new QueryClient();
+// Force dynamic rendering to avoid prerendering issues
+export const dynamic = "force-dynamic";
 
 // Initialize Coinbase Wallet SDK
 const coinbaseWallet = new CoinbaseWalletSDK({
@@ -440,6 +437,7 @@ const useEthersSigner = () => {
 
   return signer;
 };
+
 // Function to sign a message with Coinbase Wallet
 const useSignMessage = () => {
   const signMessageAsync = async ({ message }: { message: string }) => {
@@ -1285,8 +1283,18 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
 
 // Export the top-level Page component with providers wrapping Home
 export default function Page() {
+  const [queryClient] = useState(() => new QueryClient({
+    defaultOptions: {
+      queries: {
+        // Disable queries during SSR to avoid server-side fetching
+        enabled: typeof window !== "undefined",
+      },
+    },
+  }));
+
   return (
     <QueryClientProvider client={queryClient}>
+
       <AppOnchainProvider>
         <Web3Wrapper onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)}>
           <div className="wallet-status">
@@ -1295,6 +1303,7 @@ export default function Page() {
           <Home onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)} />
         </Web3Wrapper>
       </AppOnchainProvider>
+
     </QueryClientProvider>
   );
 }
