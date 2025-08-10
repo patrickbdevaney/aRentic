@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, ReactNode } from "react";
-import { QueryClient, QueryClientProvider, HydrationBoundary } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import CoinbaseWalletSDK from "@coinbase/wallet-sdk";
 import { AppOnchainProvider } from "@/components/OnchainProvider";
 import { sendUsdcToDeposit } from "@/lib/escrow";
@@ -1061,177 +1061,162 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   };
 
   return (
-    <div className="container">
-      <div className="header">
-        <h1 className="main-title">🏠 aRentic</h1>
-        <p className="subtitle">The smartest way to find and schedule your next rental with crypto escrow.</p>
-      </div>
+    <>
+      <div className="container">
+        <div className="header">
+          <h1 className="main-title">🏠 aRentic</h1>
+          <p className="subtitle">The smartest way to find and schedule your next rental with crypto escrow.</p>
+        </div>
 
-      <div className="pre-schedule-section">
-        <h3>🗓️ Set Your Weekly Availability</h3>
-        <p>Tell us when you're free, and our AI will schedule viewings for you.</p>
-      </div>
+        <div className="pre-schedule-section">
+          <h3>🗓️ Set Your Weekly Availability</h3>
+          <p>Tell us when you're free, and our AI will schedule viewings for you.</p>
+        </div>
 
-      <div className="main-grid">
-        <div className="chat-section">
-          <div className="chat-container">
-            <div className="chat-header">
-              <h2 className="chat-title">
-                💬 Chat
-                {isLoading && <div className="spinner"></div>}
-              </h2>
-            </div>
-            <div className="chat-messages">
-              {chat.map((msg, i) => {
-                const isUser = msg.startsWith("👤 You:");
-                return (
-                  <div key={i} className={`message-wrapper ${isUser ? "user-message" : "system-message"}`}>
-                    <div className={`message ${isUser ? "user" : "system"}`}>
-                      <p>{msg}</p>
+        <div className="main-grid">
+          <div className="chat-section">
+            <div className="chat-container">
+              <div className="chat-header">
+                <h2 className="chat-title">
+                  💬 Chat
+                  {isLoading && <div className="spinner"></div>}
+                </h2>
+              </div>
+              <div className="chat-messages">
+                {chat.map((msg, i) => {
+                  const isUser = msg.startsWith("👤 You:");
+                  return (
+                    <div key={i} className={`message-wrapper ${isUser ? "user-message" : "system-message"}`}>
+                      <div className={`message ${isUser ? "user" : "system"}`}>
+                        <p>{msg}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+                {isLoading && (
+                  <div className="message-wrapper system-message">
+                    <div className="message system">
+                      <div className="typing-indicator">
+                        <div className="dot"></div>
+                        <div className="dot"></div>
+                        <div className="dot"></div>
+                      </div>
                     </div>
                   </div>
-                );
-              })}
-              {isLoading && (
-                <div className="message-wrapper system-message">
-                  <div className="message system">
-                    <div className="typing-indicator">
-                      <div className="dot"></div>
-                      <div className="dot"></div>
-                      <div className="dot"></div>
-                    </div>
-                  </div>
+                )}
+              </div>
+              <div className="input-area">
+                <div className="input-wrapper">
+                  <input
+                    type="text"
+                    className="chat-input"
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    onKeyPress={(e) => e.key === "Enter" && handleSubmit()}
+                    placeholder="e.g., 2BR 1BA apartment in Williamsburg, New York under $3000"
+                    disabled={isLoading}
+                  />
+                  <select
+                    className="state-select"
+                    value={selectedState}
+                    onChange={(e) => setSelectedState(e.target.value)}
+                    disabled={isLoading}
+                  >
+                    {usStates.map((state) => (
+                      <option key={state.code} value={state.code}>
+                        {state.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleSubmit}
+                    className="send-button"
+                    disabled={isLoading || !prompt.trim()}
+                  >
+                    ✈️ Search
+                  </button>
                 </div>
-              )}
-            </div>
-            <div className="input-area">
-              <div className="input-wrapper">
-                <input
-                  type="text"
-                  className="chat-input"
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  onKeyPress={(e) => e.key === "Enter" && handleSubmit()}
-                  placeholder="e.g., 2BR 1BA apartment in Williamsburg, New York under $3000"
-                  disabled={isLoading}
-                />
-                <select
-                  className="state-select"
-                  value={selectedState}
-                  onChange={(e) => setSelectedState(e.target.value)}
-                  disabled={isLoading}
-                >
-                  {usStates.map((state) => (
-                    <option key={state.code} value={state.code}>
-                      {state.name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={handleSubmit}
-                  className="send-button"
-                  disabled={isLoading || !prompt.trim()}
-                >
-                  ✈️ Search
-                </button>
               </div>
             </div>
           </div>
-        </div>
 
-        <div className="sidebar">
-          <div className="status-panel">
-            <h3 className="panel-title">⚡ Progress</h3>
-            <div className="status-items">
-              {listing && (
-                <div className="status-item complete">
-                  <div className="status-dot"></div>
-                  <span>Property Search</span>
-                </div>
-              )}
-              {listing?.agent.email && (
-                <div className="status-item complete">
-                  <div className="status-dot"></div>
-                  <span>Contact Found</span>
-                </div>
-              )}
-              {emailDraft && (
-                <div className="status-item complete">
-                  <div className="status-dot"></div>
-                  <span>Email & Invite Staged</span>
-                </div>
-              )}
-              {authenticated && emailDraft && listing?.agent.email && (
-                <div className="status-item complete">
-                  <div className="status-dot"></div>
-                  <span>Microsoft Authenticated</span>
-                </div>
-              )}
-              {userWalletAddress && (
-                <div className="status-item complete">
-                  <div className="status-dot"></div>
-                  <span>Wallet Connected</span>
-                </div>
-              )}
-            </div>
-          </div>
-          {listing && (
-            <div className="listing-panel">
-              <h3 className="panel-title">🏠 Selected Property</h3>
-              <p>
-                <strong>Address:</strong> {listing.address}
-              </p>
-              <p>
-                <strong>Price:</strong> ${listing.price.toLocaleString()}/month
-              </p>
-              <p>
-                <strong>Beds / Baths:</strong> {listing.bedrooms} bed / {listing.bathrooms} bath
-              </p>
-              <p>
-                <strong>Type:</strong> {listing.propertyType}
-              </p>
-              <p>
-                <strong>Listing:</strong>{" "}
-                {listing.detailUrl !== "#" ? (
-                  <a
-                    href={formatUrl(listing.detailUrl)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="agent-link"
-                  >
-                    View Agent Site
-                  </a>
-                ) : (
-                  <span style={{ color: "#d1d5db" }}>No agent site available</span>
+          <div className="sidebar">
+            <div className="status-panel">
+              <h3 className="panel-title">⚡ Progress</h3>
+              <div className="status-items">
+                {listing && (
+                  <div className="status-item complete">
+                    <div className="status-dot"></div>
+                    <span>Property Search</span>
+                  </div>
                 )}
-              </p>
+                {listing?.agent.email && (
+                  <div className="status-item complete">
+                    <div className="status-dot"></div>
+                    <span>Contact Found</span>
+                  </div>
+                )}
+                {emailDraft && (
+                  <div className="status-item complete">
+                    <div className="status-dot"></div>
+                    <span>Email & Invite Staged</span>
+                  </div>
+                )}
+                {authenticated && emailDraft && listing?.agent.email && (
+                  <div className="status-item complete">
+                    <div className="status-dot"></div>
+                    <span>Microsoft Authenticated</span>
+                  </div>
+                )}
+                {userWalletAddress && (
+                  <div className="status-item complete">
+                    <div className="status-dot"></div>
+                    <span>Wallet Connected</span>
+                  </div>
+                )}
+              </div>
             </div>
-          )}
+            {listing && (
+              <div className="listing-panel">
+                <h3 className="panel-title">🏠 Selected Property</h3>
+                <p>
+                  <strong>Address:</strong> {listing.address}
+                </p>
+                <p>
+                  <strong>Price:</strong> ${listing.price.toLocaleString()}/month
+                </p>
+                <p>
+                  <strong>Beds / Baths:</strong> {listing.bedrooms} bed / {listing.bathrooms} bath
+                </p>
+                <p>
+                  <strong>Type:</strong> {listing.propertyType}
+                </p>
+                <p>
+                  <strong>Listing:</strong>{" "}
+                  {listing.detailUrl !== "#" ? (
+                    <a
+                      href={formatUrl(listing.detailUrl)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="agent-link"
+                    >
+                      View Agent Site
+                    </a>
+                  ) : (
+                    <span style={{ color: "#d1d5db" }}>No agent site available</span>
+                  )}
+                </p>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
 
-      <div className="listings-section">
-        <h3 className="listings-title">Your Best Matches</h3>
-        <p className="listings-subtitle">Make a more detailed prompt to get a better match.</p>
-        <div className="listings-grid">
-          <ListingCard
-            list={testListing}
-            handleGenerateDraft={handleGenerateDraft}
-            listingDrafts={listingDrafts}
-            calendarTime={calendarTime}
-            setCalendarTime={setCalendarTime}
-            authenticated={authenticated}
-            handleLogin={handleLogin}
-            sendEmailAndCreateInvite={sendEmailAndCreateInvite}
-            finalActionLoading={finalActionLoading}
-            handleDeposit={handleDeposit}
-            handleFundWallet={handleFundWallet}
-            isFundingWallet={isFundingWallet}
-          />
-          {allListings.slice(0, showAllListings ? allListings.length : 3).map((list, index) => (
+        <div className="listings-section">
+          <h3 className="listings-title">Your Best Matches</h3>
+          <p className="listings-subtitle">Make a more detailed prompt to get a better match.</p>
+          <div className="listings-grid">
             <ListingCard
-              key={index}
-              list={list}
+              list={testListing}
               handleGenerateDraft={handleGenerateDraft}
               listingDrafts={listingDrafts}
               calendarTime={calendarTime}
@@ -1244,16 +1229,33 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
               handleFundWallet={handleFundWallet}
               isFundingWallet={isFundingWallet}
             />
-          ))}
+            {allListings.slice(0, showAllListings ? allListings.length : 3).map((list, index) => (
+              <ListingCard
+                key={index}
+                list={list}
+                handleGenerateDraft={handleGenerateDraft}
+                listingDrafts={listingDrafts}
+                calendarTime={calendarTime}
+                setCalendarTime={setCalendarTime}
+                authenticated={authenticated}
+                handleLogin={handleLogin}
+                sendEmailAndCreateInvite={sendEmailAndCreateInvite}
+                finalActionLoading={finalActionLoading}
+                handleDeposit={handleDeposit}
+                handleFundWallet={handleFundWallet}
+                isFundingWallet={isFundingWallet}
+              />
+            ))}
+          </div>
+          {allListings.length > 3 && (
+            <button
+              onClick={() => setShowAllListings(!showAllListings)}
+              className="see-more-button"
+            >
+              {showAllListings ? "Show Less" : `See More (${allListings.length - 3} more)`}
+            </button>
+          )}
         </div>
-        {allListings.length > 3 && (
-          <button
-            onClick={() => setShowAllListings(!showAllListings)}
-            className="see-more-button"
-          >
-            {showAllListings ? "Show Less" : `See More (${allListings.length - 3} more)`}
-          </button>
-        )}
       </div>
 
       {emailDraft && (
@@ -1277,24 +1279,38 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
 // Export the top-level Page component with providers wrapping Home
 export default function Page() {
-  const [queryClient] = useState(() => new QueryClient({
-    defaultOptions: {
-      queries: {
-        // Disable queries during SSR to avoid server-side fetching
-        enabled: typeof window !== "undefined",
-      },
-    },
-  }));
+  const [queryClient, setQueryClient] = useState<QueryClient | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    // Initialize QueryClient only on the client side
+    if (typeof window !== "undefined") {
+      setQueryClient(
+        new QueryClient({
+          defaultOptions: {
+            queries: {
+              enabled: true, // Queries will only run client-side
+            },
+          },
+        })
+      );
+      setIsMounted(true);
+    }
+  }, []);
+
+  // Render nothing until mounted to avoid server-side execution
+  if (!isMounted || !queryClient) {
+    return null;
+  }
 
   return (
     <QueryClientProvider client={queryClient}>
-
       <AppOnchainProvider>
         <Web3Wrapper onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)}>
           <div className="wallet-status">
@@ -1303,7 +1319,6 @@ export default function Page() {
           <Home onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)} />
         </Web3Wrapper>
       </AppOnchainProvider>
-
     </QueryClientProvider>
   );
 }
