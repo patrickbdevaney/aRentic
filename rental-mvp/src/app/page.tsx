@@ -1,3 +1,4 @@
+// app/page.tsx
 "use client";
 
 import { useState, useEffect } from 'react';
@@ -7,14 +8,39 @@ import { ConnectWallet } from '@coinbase/onchainkit/wallet';
 import { WagmiProvider, createConfig, http } from 'wagmi';
 import { base } from 'wagmi/chains';
 import { coinbaseWallet } from 'wagmi/connectors';
-import { useAccount } from 'wagmi';
+import { useAccount, useWalletClient } from 'wagmi';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { FundButton } from '@coinbase/onchainkit/fund';
+import { ethers, BrowserProvider } from 'ethers';
+import { AppOnchainProvider } from '@/components/OnchainProvider';
+import { sendUsdcToDeposit } from '@/lib/escrow';
+import jsPDF from 'jspdf';
 
 // Force dynamic rendering for wallet connection
 export const dynamic = 'force-dynamic';
 
 // Create QueryClient instance
 const queryClient = new QueryClient();
+
+// Custom hook to convert WalletClient to ethers.Signer
+const useEthersSigner = () => {
+  const { data: walletClient } = useWalletClient();
+  const [signer, setSigner] = useState<ethers.Signer | null>(null);
+
+  useEffect(() => {
+    if (walletClient) {
+      const provider = new BrowserProvider(walletClient);
+      provider.getSigner().then(setSigner).catch((error) => {
+        console.error('Failed to get signer:', error);
+        setSigner(null);
+      });
+    } else {
+      setSigner(null);
+    }
+  }, [walletClient]);
+
+  return signer;
+};
 
 // Define interfaces for TypeScript
 interface Listing {
@@ -84,19 +110,7 @@ const msalInstance = typeof window !== 'undefined' ? new PublicClientApplication
 const msalScopes = ['Calendars.ReadWrite', 'Mail.Send'];
 const groq = typeof window !== 'undefined' ? new Groq({ apiKey: process.env.NEXT_PUBLIC_GROQ_API_KEY || '', dangerouslyAllowBrowser: true }) : null;
 
-// Web3 configuration
-const wagmiConfig = createConfig({
-  chains: [base],
-  connectors: [
-    coinbaseWallet({
-      appName: 'Rental AI Assistant',
-      preference: 'smartWalletOnly',
-    }),
-  ],
-  transports: {
-    [base.id]: http(),
-  },
-});
+// Web3 configuration (moved to OnchainProvider)
 
 const testListing: Listing = {
   id: 'test-listing',
@@ -151,7 +165,7 @@ function Web3Wrapper({ children }: { children: React.ReactNode }) {
 }
 
 // Listing Card component to handle client-side image URL generation
-function ListingCard({ list, handleGenerateDraft, listingDrafts, calendarTime, setCalendarTime, authenticated, handleLogin, sendEmailAndCreateInvite, finalActionLoading }: {
+function ListingCard({ list, handleGenerateDraft, listingDrafts, calendarTime, setCalendarTime, authenticated, handleLogin, sendEmailAndCreateInvite, finalActionLoading, handleDeposit }: {
   list: Listing;
   handleGenerateDraft: (listing: Listing) => void;
   listingDrafts: { [key: string]: string };
@@ -161,6 +175,7 @@ function ListingCard({ list, handleGenerateDraft, listingDrafts, calendarTime, s
   handleLogin: () => void;
   sendEmailAndCreateInvite: (listing: Listing, draft: string, eventTime: string) => void;
   finalActionLoading: { [key: string]: boolean };
+  handleDeposit: (listingId: string, amountUSD: string) => void;
 }) {
   const [imageUrl, setImageUrl] = useState<string>('/fallback-image.jpg');
 
@@ -210,7 +225,6 @@ function ListingCard({ list, handleGenerateDraft, listingDrafts, calendarTime, s
             className="copy-draft-button"
             onClick={() => {
               navigator.clipboard.writeText(listingDrafts[list.id]);
-              // Note: setChat is not available in this component, so this needs to be passed as a prop if required
             }}
           >
             📋 Copy Draft
@@ -239,6 +253,12 @@ function ListingCard({ list, handleGenerateDraft, listingDrafts, calendarTime, s
                   {finalActionLoading[list.id] ? 'Sending...' : '🚀 Send Email & Invite'}
                 </button>
               )}
+              <button
+                onClick={() => handleDeposit(list.id, (list.price * 0.15).toFixed(2))} // 15% broker fee example
+                className="deposit-button"
+              >
+                💰 Deposit Escrow (${(list.price * 0.15).toFixed(2)})
+              </button>
             </>
           )}
         </div>
@@ -272,6 +292,8 @@ function Home() {
   const [authenticated, setAuthenticated] = useState<boolean>(false);
   const [finalActionLoading, setFinalActionLoading] = useState<{ [key: string]: boolean }>({});
   const [account, setAccount] = useState<any>(null);
+
+  const signer = useEthersSigner();
 
   // Initialize MSAL only on client-side
   useEffect(() => {
@@ -373,7 +395,7 @@ function Home() {
   const parsePromptFallback = (prompt: string): ParsedPrompt => {
     const params: ParsedPrompt = {};
     const lowerPrompt = prompt.toLowerCase();
-    let cityMatch = lowerPrompt.match(/([a-zA-Z\s]+),\s*([A-Z]{2})/);
+    let cityMatch = lowerPrompt.match(/([a-zA-Z\s]+)+,\s*([A-Z]{2})/);
     if (cityMatch) {
       params.city = cityMatch[1].trim();
       params.state = cityMatch[2];
@@ -496,6 +518,20 @@ function Home() {
     }
   };
 
+  const generateContractPdfBase64 = (address: string): string => {
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text('Generic Rental Contract', 10, 10);
+    doc.setFontSize(12);
+    doc.text(`Property Address: ${address}`, 10, 20);
+    doc.text('This is a generic rental agreement template.', 10, 30);
+    doc.text('Parties: Tenant [Your Name] and Landlord [Agent Name].', 10, 40);
+    doc.text('Terms: Monthly rent, 12-month lease, etc.', 10, 50);
+    doc.text('Signature: ________________________ Date: __________', 10, 60);
+    // Add more generic terms as needed
+    return doc.output('datauristring').split(',')[1]; // Base64 string
+  };
+
   const sendEmailAndCreateInvite = async (selectedListing: Listing, draft: string, eventTime: string) => {
     if (!msalInstance || !selectedListing.agent.email || !draft || !eventTime) {
       setChat(prev => [...prev, '⚠️ Missing required information to send email and invite.']);
@@ -538,6 +574,8 @@ function Home() {
       }
     }
 
+    const pdfBase64 = generateContractPdfBase64(selectedListing.address);
+
     const emailPayload = {
       message: {
         subject: `Inquiry: ${selectedListing.address}`,
@@ -549,6 +587,14 @@ function Home() {
         ...(authenticated && account?.username && {
           from: { emailAddress: { address: account.username } },
         }),
+        attachments: [
+          {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            name: "RentalContract.pdf",
+            contentType: "application/pdf",
+            contentBytes: pdfBase64
+          }
+        ]
       },
       saveToSentItems: true,
     };
@@ -599,7 +645,7 @@ function Home() {
 
       setChat(prev => [
         ...prev,
-        `✅ Inquiry email sent to ${selectedListing.agent.email}!`,
+        `✅ Inquiry email sent to ${selectedListing.agent.email} with PDF contract attached!`,
         `✅ Calendar invite created for ${selectedListing.address}.`,
         '🎉 All done! Good luck with your rental!',
       ]);
@@ -624,6 +670,26 @@ function Home() {
     setListingDrafts(prev => ({ ...prev, [selectedListing.id]: draft }));
     setEmailDraft(draft);
     setChat(prev => [...prev, `📝 Draft generated for ${selectedListing.address}. ${selectedListing.agent.email ? 'Select a time and authenticate to send.' : 'No agent email found.'}`]);
+  };
+
+  const handleDeposit = async (listingId: string, amountUSD: string) => {
+    if (!signer) {
+      setChat(prev => [...prev, 'Please connect wallet to deposit.']);
+      return;
+    }
+    setChat(prev => [...prev, `🚀 Initiating deposit of $${amountUSD} to escrow...`]);
+    try {
+      const txHash = await sendUsdcToDeposit(signer, parseFloat(amountUSD), process.env.NEXT_PUBLIC_ESCROW_ADDRESS!);
+      await fetch('/api/escrow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId, txHash, amountUSD, email: account?.username || null })
+      });
+      setChat(prev => [...prev, `✅ Escrow deposit tx submitted: ${txHash}`]);
+    } catch (e) {
+      console.error(e);
+      setChat(prev => [...prev, '❌ Deposit failed.']);
+    }
   };
 
   const handleSubmit = async (e?: React.FormEvent) => {
@@ -663,17 +729,22 @@ function Home() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <WagmiProvider config={wagmiConfig}>
+      <AppOnchainProvider>
         <Web3Wrapper>
           <div className="container">
             <div className="header">
               <h1 className="main-title">🏠 Rental AI Assistant</h1>
-              <p className="subtitle">The smartest way to find and schedule your next rental.</p>
+              <p className="subtitle">The smartest way to find and schedule your next rental with crypto escrow.</p>
             </div>
 
             <div className="pre-schedule-section">
               <h3>🗓️ Set Your Weekly Availability</h3>
               <p>Tell us when you're free, and our AI will schedule viewings for you. (Coming Soon!)</p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', alignItems: 'center' }}>
+              <ConnectWallet />
+              <FundButton />
             </div>
 
             <div className="main-grid">
@@ -771,145 +842,34 @@ function Home() {
               <h3 className="listings-title">Your Best Matches</h3>
               <p className="listings-subtitle">Make a more detailed prompt to get a better match.</p>
               <div className="listings-grid">
-                <div className="listing-card">
-                  <img src={getStreetViewUrl(testListing.address)} alt={`Street View of ${testListing.address}`} style={{ width: '100%', height: '200px', objectFit: 'cover', borderRadius: '0.5rem' }} />
-                  <p><strong>Address:</strong> {testListing.address}</p>
-                  <p><strong>Price:</strong> ${testListing.price.toLocaleString()}/month</p>
-                  <p><strong>Beds / Baths:</strong> {testListing.bedrooms} bed / {testListing.bathrooms} bath</p>
-                  <p><strong>Type:</strong> {testListing.propertyType}</p>
-                  {testListing.livingArea > 0 && <p><strong>Area:</strong> {testListing.livingArea.toLocaleString()} sq ft</p>}
-                  <p>
-                    <strong>Listing:</strong>{' '}
-                    {testListing.detailUrl !== '#' ? (
-                      <a href={formatUrl(testListing.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
-                        View Agent Site
-                      </a>
-                    ) : (
-                      <span style={{ color: '#d1d5db' }}>No agent site available</span>
-                    )}
-                  </p>
-                  <button
-                    className="generate-draft-button"
-                    onClick={() => handleGenerateDraft(testListing)}
-                  >
-                    📝 Generate Email Draft
-                  </button>
-                  {listingDrafts[testListing.id] && (
-                    <div className="draft-container">
-                      <textarea
-                        className="draft-textarea"
-                        value={listingDrafts[testListing.id]}
-                        readOnly
-                      />
-                      <button
-                        className="copy-draft-button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(listingDrafts[testListing.id]);
-                          setChat(prev => [...prev, `✅ Email draft copied for ${testListing.address}!`]);
-                        }}
-                      >
-                        📋 Copy Draft
-                      </button>
-                      {testListing.agent.email && (
-                        <>
-                          <input
-                            type="datetime-local"
-                            className="draft-textarea datetime-input"
-                            value={calendarTime}
-                            onChange={(e) => setCalendarTime(e.target.value)}
-                          />
-                          {!authenticated ? (
-                            <button
-                              onClick={handleLogin}
-                              className="auth-button"
-                            >
-                              🔐 Authorize Microsoft to Send
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => sendEmailAndCreateInvite(testListing, listingDrafts[testListing.id], calendarTime)}
-                              className="execute-button"
-                              disabled={finalActionLoading[testListing.id] || !testListing.agent.email}
-                            >
-                              {finalActionLoading[testListing.id] ? 'Sending...' : '🚀 Send Email & Invite'}
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
+                <ListingCard
+                  list={testListing}
+                  handleGenerateDraft={handleGenerateDraft}
+                  listingDrafts={listingDrafts}
+                  calendarTime={calendarTime}
+                  setCalendarTime={setCalendarTime}
+                  authenticated={authenticated}
+                  handleLogin={handleLogin}
+                  sendEmailAndCreateInvite={sendEmailAndCreateInvite}
+                  finalActionLoading={finalActionLoading}
+                  handleDeposit={handleDeposit}
+                />
                 {allListings
                   .slice(0, showAllListings ? allListings.length : 3)
                   .map((list, index) => (
-                    <div key={index} className="listing-card">
-                      <img src={getStreetViewUrl(list.address)} alt={`Street View of ${list.address}`} style={{ width: '100%', height: '200px', objectFit: 'cover', borderRadius: '0.5rem' }} />
-                      <p><strong>Address:</strong> {list.address}</p>
-                      <p><strong>Price:</strong> ${list.price.toLocaleString()}/month</p>
-                      <p><strong>Beds / Baths:</strong> {list.bedrooms} bed / {list.bathrooms} bath</p>
-                      <p><strong>Type:</strong> {list.propertyType}</p>
-                      {list.livingArea > 0 && <p><strong>Area:</strong> {list.livingArea.toLocaleString()} sq ft</p>}
-                      <p>
-                        <strong>Listing:</strong>{' '}
-                        {list.detailUrl !== '#' ? (
-                          <a href={formatUrl(list.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
-                            View Agent Site
-                          </a>
-                        ) : (
-                          <span style={{ color: '#d1d5db' }}>No agent site available</span>
-                        )}
-                      </p>
-                      <button
-                        className="generate-draft-button"
-                        onClick={() => handleGenerateDraft(list)}
-                      >
-                        📝 Generate Email Draft
-                      </button>
-                      {listingDrafts[list.id] && (
-                        <div className="draft-container">
-                          <textarea
-                            className="draft-textarea"
-                            value={listingDrafts[list.id]}
-                            readOnly
-                          />
-                          <button
-                            className="copy-draft-button"
-                            onClick={() => {
-                              navigator.clipboard.writeText(listingDrafts[list.id]);
-                              setChat(prev => [...prev, `✅ Email draft copied for ${list.address}!`]);
-                            }}
-                          >
-                            📋 Copy Draft
-                          </button>
-                          {list.agent.email && (
-                            <>
-                              <input
-                                type="datetime-local"
-                                className="draft-textarea datetime-input"
-                                value={calendarTime}
-                                onChange={(e) => setCalendarTime(e.target.value)}
-                              />
-                              {!authenticated ? (
-                                <button
-                                  onClick={handleLogin}
-                                  className="auth-button"
-                                >
-                                  🔐 Authorize Microsoft to Send
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => sendEmailAndCreateInvite(list, listingDrafts[list.id], calendarTime)}
-                                  className="execute-button"
-                                  disabled={finalActionLoading[list.id] || !list.agent.email}
-                                >
-                                  {finalActionLoading[list.id] ? 'Sending...' : '🚀 Send Email & Invite'}
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                    <ListingCard
+                      key={index}
+                      list={list}
+                      handleGenerateDraft={handleGenerateDraft}
+                      listingDrafts={listingDrafts}
+                      calendarTime={calendarTime}
+                      setCalendarTime={setCalendarTime}
+                      authenticated={authenticated}
+                      handleLogin={handleLogin}
+                      sendEmailAndCreateInvite={sendEmailAndCreateInvite}
+                      finalActionLoading={finalActionLoading}
+                      handleDeposit={handleDeposit}
+                    />
                   ))}
               </div>
               {allListings.length > 3 && (
@@ -939,90 +899,22 @@ function Home() {
             )}
 
             <style jsx>{`
-              .container { min-height: 100vh; background: linear-gradient(135deg, #0f172a 0%, #581c87 50%, #0f172a 100%); padding: 2rem; }
-              .header { text-align: center; margin-bottom: 3rem; padding-top: 1rem; }
-              .main-title { font-size: 2.5rem; font-weight: bold; color: white; margin-bottom: 0.5rem; background: linear-gradient(45deg, #60a5fa, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-              .subtitle { font-size: 1.1rem; color: #d1d5db; font-weight: 300; }
-              .pre-schedule-section { text-align: center; color: white; background: rgba(255, 255, 255, 0.1); padding: 1rem; border-radius: 1rem; max-width: 800px; margin: 2rem auto; }
-              .listings-subtitle { color: #d1d5db; text-align: center; margin-top: -1rem; margin-bottom: 2rem; }
-              .see-more-button { display: block; margin: 2rem auto; padding: 0.75rem 2rem; background: transparent; border: 1px solid white; color: white; border-radius: 0.5rem; cursor: pointer; }
-              .see-more-button:hover { background: rgba(255, 255, 255, 0.1); }
-              .main-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; max-width: 1200px; margin: 0 auto 3rem; }
-              @media (max-width: 768px) { .main-grid { grid-template-columns: 1fr; } }
-              .chat-section { width: 100%; }
-              .chat-container { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(20px); border-radius: 1rem; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2); }
-              .chat-header { background: linear-gradient(45deg, #2563eb, #9333ea); padding: 1rem; border-radius: 1rem 1rem 0 0; }
-              .chat-title { color: white; font-size: 1.25rem; font-weight: bold; margin: 0; display: flex; align-items: center; gap: 0.5rem; }
-              .spinner { width: 1.25rem; height: 1.25rem; border: 2px solid transparent; border-top: 2px solid white; border-radius: 50%; animation: spin 1s linear infinite; }
-              .chat-messages { height: 20rem; overflow-y: auto; padding: 1.5rem; background: rgba(15, 23, 42, 0.8); display: flex; flex-direction: column; gap: 0.75rem; }
-              .message-wrapper { display: flex; animation: fadeIn 0.3s ease-out; }
-              .message-wrapper.user-message { justify-content: flex-end; }
-              .message-wrapper.system-message { justify-content: flex-start; }
-              .message { max-width: 80%; padding: 0.75rem 1rem; border-radius: 0.75rem; }
-              .message.user { background: linear-gradient(45deg, #3b82f6, #9333ea); color: white; }
-              .message.system { background: rgba(255, 255, 255, 0.1); color: white; border: 1px solid rgba(255, 255, 255, 0.15); }
-              .message p { margin: 0; font-size: 0.9rem; line-height: 1.4; }
-              .typing-indicator { display: flex; gap: 0.4rem; }
-              .dot { width: 0.4rem; height: 0.4rem; background: #60a5fa; border-radius: 50%; animation: bounce 1.2s ease-in-out infinite both; }
-              .dot:nth-child(1) { animation-delay: -0.24s; }
-              .dot:nth-child(2) { animation-delay: -0.12s; }
-              .input-area { padding: 1rem; background: rgba(15, 23, 42, 0.8); border-top: 1px solid rgba(255, 255, 255, 0.1); }
-              .input-wrapper { display: flex; gap: 0.5rem; align-items: center; }
-              .chat-input { flex: 1; padding: 0.75rem 1rem; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 0.5rem; color: white; outline: none; }
-              .chat-input::placeholder { color: #9ca3af; }
-              .chat-input:focus { border-color: #3b82f6; }
-              .state-select { padding: 0.75rem; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 0.5rem; color: white; cursor: pointer; }
-              .state-select:focus { border-color: #9333ea; }
-              .state-select option { color: #000000; background: #ffffff; }
-              .state-select option:hover { background: #e0e7ff; }
-              .send-button { background: linear-gradient(45deg, #2563eb, #9333ea); color: white; font-weight: 600; padding: 0.75rem 1.5rem; border: none; border-radius: 0.5rem; cursor: pointer; }
-              .send-button:hover:not(:disabled) { transform: scale(1.05); }
-              .send-button:disabled { opacity: 0.5; cursor: not-allowed; }
-              .sidebar { display: flex; flex-direction: column; gap: 1.5rem; }
-              .status-panel, .listing-panel { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(20px); border-radius: 1rem; border: 1px solid rgba(255, 255, 255, 0.1); padding: 1.5rem; box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2); }
-              .panel-title { color: white; font-size: 1.25rem; font-weight: bold; margin: 0 0 1rem; }
-              .status-items { display: flex; flex-direction: column; gap: 0.5rem; }
-              .status-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; border-radius: 0.5rem; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.2); }
-              .status-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: #22c55e; }
-              .status-item span { color: white; font-size: 0.9rem; }
-              .listing-panel p { color: white; font-size: 0.9rem; margin: 0.5rem 0; }
-              .agent-link { color: #60a5fa; text-decoration: underline; }
-              .agent-link:hover { color: #93c5fd; }
-              .listings-section { max-width: 1200px; margin: 0 auto 3rem; }
-              .listings-title { color: white; font-size: 1.5rem; font-weight: bold; margin: 0 0 1.5rem; }
-              .listings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.5rem; }
-              .listing-card { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(20px); border-radius: 1rem; border: 1px solid rgba(255, 255, 255, 0.1); padding: 1.5rem; box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2); transition: transform 0.2s; }
-              .listing-card:hover { transform: scale(1.02); }
-              .listing-card p { color: white; font-size: 0.9rem; margin: 0.5rem 0; }
-              .generate-draft-button { background: linear-gradient(45deg, #3b82f6, #9333ea); color: white; font-weight: 600; padding: 0.75rem 1.5rem; border: none; border-radius: 0.5rem; cursor: pointer; margin-top: 1rem; width: 100%; }
-              .generate-draft-button:hover:not(:disabled) { transform: scale(1.05); }
-              .generate-draft-button:disabled { opacity: 0.5; cursor: not-allowed; }
-              .draft-container { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
-              .draft-textarea { width: 100%; height: 6rem; padding: 0.75rem; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 0.5rem; color: white; resize: none; outline: none; }
-              .datetime-input { height: 2.5rem; }
-              .copy-draft-button { background: linear-gradient(45deg, #16a34a, #059669); color: white; font-weight: 600; padding: 0.75rem 1.5rem; border: none; border-radius: 0.5rem; cursor: pointer; }
-              .copy-draft-button:hover { transform: scale(1.05); }
-              .auth-button { background: linear-gradient(45deg, #2563eb, #9333ea); color: white; font-weight: 600; padding: 0.75rem 1.5rem; border: none; border-radius: 0.5rem; cursor: pointer; }
-              .auth-button:hover { transform: scale(1.05); }
-              .execute-button { background: linear-gradient(45deg, #16a34a, #059669); color: white; font-weight: 600; padding: 0.75rem 1.5rem; border: none; border-radius: 0.5rem; cursor: pointer; }
-              .execute-button:hover:not(:disabled) { transform: scale(1.05); }
-              .execute-button:disabled { opacity: 0.5; cursor: not-allowed; }
-              .details-panel { max-width: 1200px; margin: 0 auto; background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(20px); border-radius: 1rem; border: 1px solid rgba(255, 255, 255, 0.1); padding: 1.5rem; box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2); }
-              .details-title { color: white; font-size: 1.5rem; font-weight: bold; margin: 0 0 1.5rem; }
-              .details-grid { display: grid; grid-template-columns: 1fr; gap: 1.5rem; }
-              .email-section { display: flex; flex-direction: column; gap: 1rem; }
-              .section-title { font-size: 1.1rem; font-weight: 600; margin: 0; }
-              .email-title { color: #93c5fd; }
-              .instructions { padding: 0.75rem; background: rgba(30, 64, 175, 0.2); border-left: 3px solid #60a5fa; color: #e0e7ff; font-size: 0.9rem; border-radius: 0.5rem; }
-              .email-textarea { width: 100%; height: 10rem; padding: 1rem; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 0.5rem; color: white; resize: none; outline: none; }
-              .email-textarea:focus { border-color: #3b82f6; }
-              @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-              @keyframes spin { to { transform: rotate(360deg); } }
-              @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
+              .deposit-button { 
+                background: linear-gradient(45deg, #eab308, #f97316); 
+                color: white; 
+                font-weight: 600; 
+                padding: 0.75rem 1.5rem; 
+                border: none; 
+                border-radius: 0.5rem; 
+                cursor: pointer; 
+              }
+              .deposit-button:hover { 
+                transform: scale(1.05); 
+              }
             `}</style>
           </div>
         </Web3Wrapper>
-      </WagmiProvider>
+      </AppOnchainProvider>
     </QueryClientProvider>
   );
 }
