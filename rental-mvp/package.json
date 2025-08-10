@@ -13,13 +13,17 @@
   "dependencies": {
     "@azure/msal-browser": "^4.15.0",
     "@coinbase/agentkit": "^0.10.0",
+    "@coinbase/cdp-core": "^0.0.18",
+    "@coinbase/cdp-react": "^0.0.18",
     "@coinbase/cdp-sdk": "^1.34.0",
+    "@coinbase/cdp-wagmi": "^0.0.18",
     "@coinbase/onchainkit": "^0.38.19",
     "@farcaster/frame-sdk": "^0.0.64",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@react-oauth/google": "^0.12.2",
     "@simplewebauthn/types": "^12.0.0",
     "@supabase/supabase-js": "^2.54.0",
+    "@tanstack/react-query": "^5.84.2",
     "@types/microsoft-graph": "^2.40.1",
     "axios": "^1.6.0",
     "dotenv": "^16.0.0",
@@ -36,6 +40,7 @@
     "react-dom": "19.1.0",
     "resend": "^4.7.0",
     "ts-node": "^10.9.2",
+    "viem": "^2.33.3",
     "wagmi": "^2.16.2"
   },
   "devDependencies": {

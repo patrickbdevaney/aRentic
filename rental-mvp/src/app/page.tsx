@@ -1,17 +1,18 @@
+
 "use client";
 
 import { useState, useEffect } from "react";
 import { PublicClientApplication, InteractionRequiredAuthError } from "@azure/msal-browser";
 import { Groq } from "groq-sdk";
-import { useAccount, useWalletClient } from "wagmi";
+import { useAccount, useWalletClient, useSignMessage } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ethers, BrowserProvider } from "ethers";
 import { AppOnchainProvider } from "@/components/OnchainProvider";
 import { sendUsdcToDeposit } from "@/lib/escrow";
 import jsPDF from "jspdf";
-import { createConfig, http, WagmiProvider } from "wagmi"; // Added WagmiProvider and createConfig
+import { AuthButton } from "@coinbase/cdp-react/components/AuthButton";
+import { createConfig, http, WagmiProvider } from "wagmi";
 import { base } from "wagmi/chains";
-import { coinbaseWallet } from "wagmi/connectors";
 import "./styles.css";
 
 // Force dynamic rendering for wallet connection
@@ -155,13 +156,14 @@ const getDefaultBusinessTime = (): string => {
   return targetDate.toISOString().split(".")[0];
 };
 
-// Function to generate Google Street View URL
+// Function to generate Street View URL
 const getStreetViewUrl = (address: string) => {
   const encodedAddress = encodeURIComponent(address);
-  const url = `/api/streetview?address=${encodedAddress}`;
+  const url = `/ api / streetview ? address = ${encodedAddress} `;
   console.log("Street View API Route URL:", url);
   return url;
 };
+
 // Custom hook to convert WalletClient to ethers.Signer
 const useEthersSigner = () => {
   const { data: walletClient } = useWalletClient();
@@ -169,7 +171,6 @@ const useEthersSigner = () => {
 
   useEffect(() => {
     if (walletClient) {
-      // Use base chain configuration for Base Mainnet
       const provider = new BrowserProvider(walletClient.transport, base);
       provider.getSigner().then(setSigner).catch((error) => {
         console.error("Failed to get signer:", error);
@@ -183,9 +184,16 @@ const useEthersSigner = () => {
   return signer;
 };
 
-// Web3-specific component to isolate useAccount
-function Web3Wrapper({ children, onWalletConnect }: { children: React.ReactNode; onWalletConnect: (address: string) => void }) {
+// Web3Wrapper component to isolate useAccount
+function Web3Wrapper({
+  children,
+  onWalletConnect
+}: {
+  children: React.ReactNode;
+  onWalletConnect: (address: string) => void
+}) {
   const { isConnected, address } = useAccount();
+  const { signMessageAsync } = useSignMessage();
 
   useEffect(() => {
     if (isConnected && address) {
@@ -199,15 +207,7 @@ function Web3Wrapper({ children, onWalletConnect }: { children: React.ReactNode;
         <p style={{ color: "#22c55e", textAlign: "center" }}>✅ Wallet Connected: {address}</p>
       ) : (
         <div style={{ display: "flex", justifyContent: "center", margin: "1rem 0" }}>
-          <button
-            onClick={() => {
-              // Trigger wallet connection via OnchainKit modal
-              // Note: This relies on OnchainKitProvider handling the modal
-            }}
-            className="connect-wallet-button"
-          >
-            Connect Wallet
-          </button>
+          <AuthButton />
         </div>
       )}
       {children}
@@ -227,6 +227,8 @@ function ListingCard({
   sendEmailAndCreateInvite,
   finalActionLoading,
   handleDeposit,
+  handleFundWallet,
+  isFundingWallet,
 }: {
   list: Listing;
   handleGenerateDraft: (listing: Listing) => void;
@@ -238,6 +240,8 @@ function ListingCard({
   sendEmailAndCreateInvite: (listing: Listing, draft: string, eventTime: string) => void;
   finalActionLoading: { [key: string]: boolean };
   handleDeposit: (listingId: string, amountUSD: string) => void;
+  handleFundWallet: (amountUSD: string, listingId: string) => void;
+  isFundingWallet: { [key: string]: boolean };
 }) {
   const [imageUrl, setImageUrl] = useState<string>("/fallback-image.jpg");
 
@@ -249,7 +253,7 @@ function ListingCard({
     <div className="listing-card">
       <img
         src={imageUrl}
-        alt={`Street View of ${list.address}`}
+        alt={`Street View of ${list.address} `}
         style={{ width: "100%", height: "200px", objectFit: "cover", borderRadius: "0.5rem" }}
         onError={(e) => {
           e.currentTarget.src = "/fallback-image.jpg";
@@ -318,10 +322,18 @@ function ListingCard({
                 </button>
               )}
               <button
+                onClick={() => handleFundWallet((list.price * 0.15).toFixed(2), list.id)}
+                className="fund-wallet-button"
+                disabled={isFundingWallet[list.id] || !authenticated}
+              >
+                {isFundingWallet[list.id] ? "Funding Wallet..." : "💸 Fund Wallet"}
+              </button>
+              <button
                 onClick={() => handleDeposit(list.id, (list.price * 0.15).toFixed(2))}
                 className="deposit-button"
+                disabled={finalActionLoading[list.id] || !authenticated}
               >
-                💰 Deposit Escrow (${(list.price * 0.15).toFixed(2)})
+                {finalActionLoading[list.id] ? "Depositing..." : `💰 Deposit Escrow($${(list.price * 0.15).toFixed(2)})`}
               </button>
             </>
           )}
@@ -337,14 +349,13 @@ const formatUrl = (url: string) => {
   return url.startsWith("http://") || url.startsWith("https://") ? url : `http://${url}`;
 };
 
-function Home() {
+function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void }) {
   const [prompt, setPrompt] = useState<string>("");
   const [selectedState, setSelectedState] = useState<string>("NY");
   const [chat, setChat] = useState<string[]>([
     "Welcome to the Rental AI Assistant! 🏠",
     "Find your perfect rental by entering a search prompt below.",
-    "I’ll show you listings, help draft emails, and send calendar invites!",
-    "Use the test listing below to try sending an email and calendar invite.",
+    "Steps: 1. Authenticate with Microsoft, 2. Sign in with Coinbase, 3. Fund Wallet, 4. Deposit to Escrow.",
   ]);
   const [emailDraft, setEmailDraft] = useState<string>("");
   const [calendarTime, setCalendarTime] = useState<string>(getDefaultBusinessTime());
@@ -355,30 +366,12 @@ function Home() {
   const [listingDrafts, setListingDrafts] = useState<{ [key: string]: string }>({});
   const [authenticated, setAuthenticated] = useState<boolean>(false);
   const [finalActionLoading, setFinalActionLoading] = useState<{ [key: string]: boolean }>({});
+  const [isFundingWallet, setIsFundingWallet] = useState<{ [key: string]: boolean }>({});
   const [account, setAccount] = useState<any>(null);
   const [userWalletAddress, setUserWalletAddress] = useState<string | null>(null);
+  const { signMessageAsync } = useSignMessage();
 
   const signer = useEthersSigner();
-
-  // Fetch wallet address after authentication
-  useEffect(() => {
-    if (authenticated && account?.username) {
-      const fetchWalletAddress = async () => {
-        try {
-          const response = await fetch(`/api/user-wallet?email=${encodeURIComponent(account.username)}`);
-          const data = await response.json();
-          if (data.walletAddress) {
-            setUserWalletAddress(data.walletAddress);
-            setChat((prev) => [...prev, `✅ Retrieved wallet address: ${data.walletAddress}`]);
-          }
-        } catch (error) {
-          console.error("Error fetching wallet address:", error);
-          setChat((prev) => [...prev, "⚠️ Could not retrieve wallet address. Connect wallet to proceed."]);
-        }
-      };
-      fetchWalletAddress();
-    }
-  }, [authenticated, account]);
 
   // Initialize MSAL
   useEffect(() => {
@@ -418,6 +411,32 @@ function Home() {
     }
   }, [calendarTime, listing]);
 
+  // Store wallet address in Supabase after Coinbase authentication
+  useEffect(() => {
+    if (authenticated && account?.username && userWalletAddress) {
+      const linkWallet = async () => {
+        try {
+          const message = `Link wallet ${userWalletAddress} to ${account.username}`;
+          const signature = await signMessageAsync({ message });
+          const response = await fetch("/api/user-wallet", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: account.username, walletAddress: userWalletAddress, signature }),
+          });
+          if (response.ok) {
+            setChat((prev) => [...prev, `✅ Wallet ${userWalletAddress} linked to ${account.username}`]);
+          } else {
+            setChat((prev) => [...prev, "⚠️ Failed to link wallet address."]);
+          }
+        } catch (error) {
+          console.error("Error linking wallet:", error);
+          setChat((prev) => [...prev, "⚠️ Error linking wallet address."]);
+        }
+      };
+      linkWallet();
+    }
+  }, [authenticated, account, userWalletAddress, signMessageAsync]);
+
   const handleLogin = async () => {
     if (!msalInstance) return;
 
@@ -439,26 +458,30 @@ function Home() {
     }
   };
 
-  const handleWalletConnect = async (address: string) => {
-    if (account?.username) {
-      try {
-        const response = await fetch("/api/user-wallet", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: account.username, walletAddress: address }),
-        });
-        if (response.ok) {
-          setUserWalletAddress(address);
-          setChat((prev) => [...prev, `✅ Wallet ${address} linked to ${account.username}`]);
-        } else {
-          setChat((prev) => [...prev, "⚠️ Failed to link wallet address."]);
-        }
-      } catch (error) {
-        console.error("Error linking wallet:", error);
-        setChat((prev) => [...prev, "⚠️ Error linking wallet address."]);
+  const handleFundWallet = async (amountUSD: string, listingId: string) => {
+    if (!userWalletAddress || !authenticated || !account?.username) {
+      setChat((prev) => [...prev, "⚠️ Please authenticate with Microsoft and Coinbase before funding."]);
+      return;
+    }
+    setIsFundingWallet((prev) => ({ ...prev, [listingId]: true }));
+    try {
+      const response = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: amountUSD, walletAddress: userWalletAddress }),
+      });
+      const data = await response.json();
+      if (data.hostedUrl) {
+        setChat((prev) => [...prev, `✅ Redirecting to Coinbase to fund wallet with $${amountUSD}...`]);
+        window.open(data.hostedUrl, "_blank");
+      } else {
+        setChat((prev) => [...prev, "⚠️ Failed to initiate wallet funding."]);
       }
-    } else {
-      setChat((prev) => [...prev, "⚠️ Please authenticate with Microsoft before connecting wallet."]);
+    } catch (error) {
+      console.error("Error funding wallet:", error);
+      setChat((prev) => [...prev, "⚠️ Error funding wallet. Please try again."]);
+    } finally {
+      setIsFundingWallet((prev) => ({ ...prev, [listingId]: false }));
     }
   };
 
@@ -802,22 +825,59 @@ function Home() {
   };
 
   const handleDeposit = async (listingId: string, amountUSD: string) => {
-    if (!signer || !userWalletAddress) {
-      setChat((prev) => [...prev, "Please connect wallet and authenticate to deposit."]);
+    if (!signer || !userWalletAddress || !authenticated) {
+      setChat((prev) => [...prev, "⚠️ Please authenticate with Microsoft and Coinbase to deposit."]);
       return;
     }
-    setChat((prev) => [...prev, `🚀 Initiating deposit of $${amountUSD} to escrow...`]);
+    setFinalActionLoading((prev) => ({ ...prev, [listingId]: true }));
+    setChat((prev) => [...prev, `🚀 Checking wallet balance and initiating deposit of $${amountUSD} to escrow...`]);
+
     try {
+      // Check USDC balance
+      const provider = signer.provider || new ethers.JsonRpcProvider(process.env.BASE_RPC_URL || "https://mainnet.base.org");
+      const usdcContract = new ethers.Contract(
+        process.env.NEXT_PUBLIC_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // Base Mainnet USDC
+        ["function balanceOf(address) view returns (uint256)", "function decimals() view returns (uint8)"],
+        signer
+      );
+      const decimals = await usdcContract.decimals();
+      const balance = await usdcContract.balanceOf(userWalletAddress);
+      const amountWei = ethers.parseUnits(amountUSD, decimals);
+      if (balance < amountWei) {
+        setChat((prev) => [...prev, `⚠️ Insufficient USDC balance. Please fund your wallet with at least $${amountUSD}.`]);
+        setFinalActionLoading((prev) => ({ ...prev, [listingId]: false }));
+        return;
+      }
+
+      // Validate escrow address
+      const escrowCode = await provider.getCode(process.env.NEXT_PUBLIC_ESCROW_ADDRESS || "");
+      if (escrowCode === "0x") {
+        setChat((prev) => [...prev, "⚠️ Invalid escrow address. Please contact support."]);
+        setFinalActionLoading((prev) => ({ ...prev, [listingId]: false }));
+        return;
+      }
+
       const txHash = await sendUsdcToDeposit(signer, parseFloat(amountUSD), process.env.NEXT_PUBLIC_ESCROW_ADDRESS!);
-      await fetch("/api/escrow", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ listingId, txHash, amountUSD, email: account?.username || null, walletAddress: userWalletAddress }),
-      });
-      setChat((prev) => [...prev, `✅ Escrow deposit tx submitted: ${txHash}`]);
+
+      // Verify transaction
+      const receipt = await provider.getTransactionReceipt(txHash);
+      if (receipt && receipt.status === 1) {
+        const message = `Deposit ${amountUSD} USDC for listing ${listingId} from ${userWalletAddress}`;
+        const signature = await signMessageAsync({ message });
+        await fetch("/api/escrow", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ listingId, txHash, amountUSD, email: account?.username || null, walletAddress: userWalletAddress, signature }),
+        });
+        setChat((prev) => [...prev, `✅ Escrow deposit tx confirmed: ${txHash}`]);
+      } else {
+        setChat((prev) => [...prev, "⚠️ Transaction failed or not confirmed. Please try again."]);
+      }
     } catch (e) {
-      console.error(e);
-      setChat((prev) => [...prev, "❌ Deposit failed."]);
+      console.error("Deposit error:", e);
+      setChat((prev) => [...prev, `❌ Deposit failed: ${e instanceof Error ? e.message : "Unknown error"}`]);
+    } finally {
+      setFinalActionLoading((prev) => ({ ...prev, [listingId]: false }));
     }
   };
 
@@ -945,7 +1005,7 @@ function Home() {
               {listing && <div className="status-item complete"><div className="status-dot"></div><span>Property Search</span></div>}
               {listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Contact Found</span></div>}
               {emailDraft && <div className="status-item complete"><div className="status-dot"></div><span>Email & Invite Staged</span></div>}
-              {authenticated && emailDraft && listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Authenticated to Send</span></div>}
+              {authenticated && emailDraft && listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Microsoft Authenticated</span></div>}
               {userWalletAddress && <div className="status-item complete"><div className="status-dot"></div><span>Wallet Connected</span></div>}
             </div>
           </div>
@@ -986,6 +1046,8 @@ function Home() {
             sendEmailAndCreateInvite={sendEmailAndCreateInvite}
             finalActionLoading={finalActionLoading}
             handleDeposit={handleDeposit}
+            handleFundWallet={handleFundWallet}
+            isFundingWallet={isFundingWallet}
           />
           {allListings
             .slice(0, showAllListings ? allListings.length : 3)
@@ -1002,6 +1064,8 @@ function Home() {
                 sendEmailAndCreateInvite={sendEmailAndCreateInvite}
                 finalActionLoading={finalActionLoading}
                 handleDeposit={handleDeposit}
+                handleFundWallet={handleFundWallet}
+                isFundingWallet={isFundingWallet}
               />
             ))}
         </div>
@@ -1035,23 +1099,16 @@ function Home() {
 
 // Export the top-level Page component with providers wrapping Home
 export default function Page() {
-  // Define wagmi config here
   const config = createConfig({
     chains: [base],
-    connectors: [
-      coinbaseWallet({
-        appName: "Rental AI Assistant",
-        preference: "smartWalletOnly",
-      }),
-    ],
     transports: {
       [base.id]: http(),
     },
   });
 
   const handleWalletConnect = (address: string) => {
-    // This function will be passed to Web3Wrapper
-    // You can add additional logic here if needed
+    // Define handleWalletConnect in Page scope to pass to Home and Web3Wrapper
+    console.log(`Wallet connected: ${address}`);
   };
 
   return (
@@ -1059,7 +1116,7 @@ export default function Page() {
       <QueryClientProvider client={queryClient}>
         <AppOnchainProvider>
           <Web3Wrapper onWalletConnect={handleWalletConnect}>
-            <Home />
+            <Home onWalletConnect={handleWalletConnect} />
           </Web3Wrapper>
         </AppOnchainProvider>
       </QueryClientProvider>

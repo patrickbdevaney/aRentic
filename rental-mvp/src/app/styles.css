@@ -560,3 +560,49 @@ connect-wallet-button {
 .connect-wallet-button:hover {
     transform: scale(1.05);
 }
+
+.fund-wallet-button {
+    background-color: #3b82f6;
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-top: 0.5rem;
+    width: 100%;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.fund-wallet-button:hover {
+    background-color: #2563eb;
+}
+
+.fund-wallet-button:disabled {
+    background-color: #93c5fd;
+    cursor: not-allowed;
+}
+
+
+/* Style for Coinbase AuthButton */
+.cdp-auth-button {
+    background-color: #3b82f6;
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin: 0.5rem auto;
+    display: block;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.cdp-auth-button:hover {
+    background-color: #2563eb;
+}
+
+.cdp-auth-button:disabled {
+    background-color: #93c5fd;
+    cursor: not-allowed;
+}
