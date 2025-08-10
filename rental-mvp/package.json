@@ -1,0 +1,44 @@
+{
+  "name": "rental-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "npm run test.ts"
+  },
+  "dependencies": {
+    "@azure/msal-browser": "^4.15.0",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@react-oauth/google": "^0.12.2",
+    "@types/microsoft-graph": "^2.40.1",
+    "axios": "^1.6.0",
+    "dotenv": "^16.0.0",
+    "express": "^5.1.0",
+    "googleapis": "^153.0.0",
+    "groq-sdk": "^0.27.0",
+    "next": "15.4.2",
+    "nodemailer": "^7.0.5",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "resend": "^4.7.0",
+    "@coinbase/onchainkit": "^0.38.18",
+    "@farcaster/frame-sdk": "^0.0.64"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^20",
+    "@types/nodemailer": "^6.4.17",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.11",
+    "typescript": "^5"
+  },
+  "resolutions": {
+    "@farcaster/frame-sdk": "0.0.64"
+  }
+}

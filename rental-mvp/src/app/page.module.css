@@ -1,0 +1,198 @@
+/* Reset all default page styling for the chatbot */
+.page {
+  display: block !important;
+  grid-template-rows: none !important;
+  align-items: initial !important;
+  justify-items: initial !important;
+  min-height: 100vh !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  font-family: inherit !important;
+  background: transparent !important;
+}
+
+.main {
+  display: block !important;
+  flex-direction: initial !important;
+  gap: 0 !important;
+  grid-row-start: initial !important;
+  max-width: none !important;
+  width: 100% !important;
+}
+
+/* Remove all default styling that might interfere */
+.main ol,
+.main li,
+.main code {
+  all: unset;
+}
+
+.ctas,
+.footer {
+  display: none !important;
+}
+
+/* Ensure full width and height for our custom layout */
+.chatbotContainer {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+/* Custom button styles that override defaults */
+.customButton {
+  appearance: none !important;
+  border-radius: 16px !important;
+  height: auto !important;
+  padding: 12px 24px !important;
+  border: none !important;
+  transition: all 0.2s ease !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 16px !important;
+  line-height: 1.5 !important;
+  font-weight: 600 !important;
+  text-decoration: none !important;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6) !important;
+  color: white !important;
+}
+
+.customButton:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 10px 20px rgba(59, 130, 246, 0.3) !important;
+}
+
+.customButton:disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+}
+
+/* Input styles */
+.customInput {
+  appearance: none !important;
+  border-radius: 16px !important;
+  padding: 16px 20px !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: white !important;
+  font-size: 16px !important;
+  backdrop-filter: blur(10px) !important;
+  transition: all 0.2s ease !important;
+}
+
+.customInput::placeholder {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+
+.customInput:focus {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3) !important;
+  outline: none !important;
+}
+
+/* Card styles */
+.customCard {
+  background: rgba(255, 255, 255, 0.1) !important;
+  backdrop-filter: blur(20px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  border-radius: 24px !important;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Text styles */
+.customHeading {
+  background: linear-gradient(135deg, #60a5fa, #a78bfa) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text !important;
+  font-weight: 700 !important;
+}
+
+/* Chat message styles */
+.chatMessage {
+  max-width: 80% !important;
+  padding: 12px 16px !important;
+  border-radius: 18px !important;
+  margin: 8px 0 !important;
+  word-wrap: break-word !important;
+  animation: fadeIn 0.3s ease-out !important;
+}
+
+.chatMessageUser {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6) !important;
+  color: white !important;
+  margin-left: auto !important;
+}
+
+.chatMessageSystem {
+  background: rgba(255, 255, 255, 0.15) !important;
+  color: white !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  backdrop-filter: blur(10px) !important;
+}
+
+/* Status indicator styles */
+.statusIndicator {
+  width: 12px !important;
+  height: 12px !important;
+  border-radius: 50% !important;
+  display: inline-block !important;
+  margin-right: 8px !important;
+}
+
+.statusActive {
+  background: #10b981 !important;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.5) !important;
+}
+
+.statusInactive {
+  background: #6b7280 !important;
+}
+
+/* Loading animation */
+.loadingDot {
+  width: 8px !important;
+  height: 8px !important;
+  border-radius: 50% !important;
+  background: #60a5fa !important;
+  display: inline-block !important;
+  margin: 0 2px !important;
+  animation: bounce 1.4s infinite !important;
+}
+
+.loadingDot:nth-child(2) {
+  animation-delay: 0.1s !important;
+  background: #a78bfa !important;
+}
+
+.loadingDot:nth-child(3) {
+  animation-delay: 0.2s !important;
+  background: #60a5fa !important;
+}
+
+/* Override any conflicting styles */
+* {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .customCard {
+    border-radius: 16px !important;
+    margin: 8px !important;
+  }
+
+  .customButton {
+    padding: 10px 20px !important;
+    font-size: 14px !important;
+  }
+
+  .customInput {
+    padding: 12px 16px !important;
+    font-size: 14px !important;
+  }
+}
