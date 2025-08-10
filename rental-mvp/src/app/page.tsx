@@ -3,11 +3,12 @@
 import { useState, useEffect } from "react";
 import { PublicClientApplication, InteractionRequiredAuthError, AccountInfo } from "@azure/msal-browser";
 import { Groq } from "groq-sdk";
-import { useAccount, useWalletClient, useConnect } from "wagmi";
+import { ConnectWallet } from "@coinbase/onchainkit/wallet";
+import { WagmiProvider, createConfig, http, useAccount, useWalletClient } from "wagmi";
+import { base } from "wagmi/chains";
+import { coinbaseWallet } from "wagmi/connectors";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ethers, BrowserProvider } from "ethers";
-import { AppOnchainProvider } from "@/components/OnchainProvider";
-import { sendUsdcToDeposit } from "@/lib/escrow";
 import jsPDF from "jspdf";
 import "./styles.css";
 
@@ -123,6 +124,20 @@ const msalInstance = typeof window !== "undefined" ? new PublicClientApplication
 const msalScopes = ["Calendars.ReadWrite", "Mail.Send"];
 const groq = typeof window !== "undefined" ? new Groq({ apiKey: process.env.NEXT_PUBLIC_GROQ_API_KEY || "", dangerouslyAllowBrowser: true }) : null;
 
+// Web3 configuration
+const wagmiConfig = createConfig({
+  chains: [base],
+  connectors: [
+    coinbaseWallet({
+      appName: "Rental AI Assistant",
+      preference: "smartWalletOnly",
+    }),
+  ],
+  transports: {
+    [base.id]: http(),
+  },
+});
+
 const testListing: Listing = {
   id: "test-listing",
   address: "123 Main Street, New York, NY 10001",
@@ -171,14 +186,14 @@ const getOnrampUrl = (address: string, amount: number) => {
   return `https://pay.coinbase.com/buy?${params.toString()}`;
 };
 
-// Custom hook to convert WalletClient to ethers.Signer
+// Custom hook to convert walletClient to ethers.Signer
 const useEthersSigner = () => {
   const { data: walletClient } = useWalletClient();
   const [signer, setSigner] = useState<ethers.Signer | null>(null);
 
   useEffect(() => {
     if (walletClient) {
-      const provider = new BrowserProvider(walletClient.transport);
+      const provider = new BrowserProvider(walletClient);
       provider.getSigner().then(setSigner).catch((error) => {
         console.error("Failed to get signer:", error);
         setSigner(null);
@@ -191,30 +206,62 @@ const useEthersSigner = () => {
   return signer;
 };
 
+// Function to link wallet address to user email
+const linkWalletAddress = async (email: string, walletAddress: string) => {
+  try {
+    const response = await fetch("/api/link-wallet", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, walletAddress }),
+    });
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || "Failed to link wallet");
+    }
+    return true;
+  } catch (error) {
+    console.error("Error linking wallet:", error);
+    return false;
+  }
+};
+
+// Function to send USDC to escrow
+const USDC_ADDRESS = process.env.NEXT_PUBLIC_USDC_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'; // Base Mainnet USDC
+const usdcAbi = [
+  'function transfer(address to, uint256 amount) public returns (bool)',
+  'function balanceOf(address account) public view returns (uint256)',
+  'function decimals() public view returns (uint8)',
+];
+
+async function sendUsdcToDeposit(signer: ethers.Signer, amount: number, escrowAddress: string) {
+  try {
+    const usdcContract = new ethers.Contract(USDC_ADDRESS, usdcAbi, signer);
+    const decimals = await usdcContract.decimals();
+    const balance = await usdcContract.balanceOf(await signer.getAddress());
+    const amountWei = ethers.parseUnits(amount.toString(), decimals);
+    if (balance.lt(amountWei)) {
+      throw new Error("Insufficient USDC balance");
+    }
+    const tx = await usdcContract.transfer(escrowAddress, amountWei);
+    const receipt = await tx.wait();
+    return receipt.hash;
+  } catch (error) {
+    console.error('Error sending USDC:', error);
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+}
+
 // Web3-specific component to isolate useAccount
 function Web3Wrapper({ children }: { children: React.ReactNode }) {
   const { isConnected, address } = useAccount();
-  const { connect, connectors } = useConnect();
-
-  const handleConnect = () => {
-    const coinbaseConnector = connectors.find(c => c.id === 'coinbaseWallet');
-    if (coinbaseConnector) {
-      connect({ connector: coinbaseConnector });
-    } else {
-      console.error("Coinbase Wallet connector not found");
-    }
-  };
 
   return (
     <div>
-      {isConnected && address ? (
+      <div style={{ display: "flex", justifyContent: "center", margin: "1rem 0" }}>
+        <ConnectWallet />
+      </div>
+      {isConnected && address && (
         <p style={{ color: "#22c55e", textAlign: "center" }}>✅ Wallet Connected: {address}</p>
-      ) : (
-        <div style={{ display: "flex", justifyContent: "center", margin: "1rem 0" }}>
-          <button onClick={handleConnect} className="connect-wallet-button">
-            Connect Wallet
-          </button>
-        </div>
       )}
       {children}
     </div>
@@ -259,7 +306,9 @@ function ListingCard({
         src={imageUrl}
         alt={`Street View of ${list.address}`}
         style={{ width: "100%", height: "200px", objectFit: "cover", borderRadius: "0.5rem" }}
-        onError={(e) => { e.currentTarget.src = "/fallback-image.jpg"; }}
+        onError={(e) => {
+          e.currentTarget.src = "/fallback-image.jpg";
+        }}
       />
       <p><strong>Address:</strong> {list.address}</p>
       <p><strong>Price:</strong> ${list.price.toLocaleString()}/month</p>
@@ -292,7 +341,10 @@ function ListingCard({
           <textarea className="draft-textarea" value={listingDrafts[list.id]} readOnly />
           <button
             className="copy-draft-button"
-            onClick={() => navigator.clipboard.writeText(listingDrafts[list.id])}
+            onClick={() => {
+              navigator.clipboard.writeText(listingDrafts[list.id]);
+              // Note: setChat is not available in this component, so this needs to be passed as a prop if required
+            }}
           >
             📋 Copy Draft
           </button>
@@ -397,6 +449,19 @@ function Home() {
       });
     }
   }, [calendarTime, listing]);
+
+  // Link wallet address when account or address changes
+  useEffect(() => {
+    if (authenticated && account?.username && address) {
+      linkWalletAddress(account.username, address).then((success) => {
+        if (success) {
+          setChat((prev) => [...prev, `✅ Wallet address linked to ${account.username}.`]);
+        } else {
+          setChat((prev) => [...prev, `⚠️ Failed to link wallet address to ${account.username}.`]);
+        }
+      });
+    }
+  }, [authenticated, account, address]);
 
   const handleLogin = async () => {
     if (!msalInstance) return;
@@ -702,15 +767,24 @@ function Home() {
       setChat((prev) => [...prev, "⚠️ Please connect your Coinbase Wallet to deposit."]);
       return;
     }
+    if (!process.env.NEXT_PUBLIC_ESCROW_ADDRESS) {
+      setChat((prev) => [...prev, "⚠️ Escrow address not configured."]);
+      return;
+    }
     setChat((prev) => [...prev, `🚀 Initiating deposit of $${amountUSD} USDC to escrow...`]);
     try {
-      const txHash = await sendUsdcToDeposit(signer, parseFloat(amountUSD), process.env.NEXT_PUBLIC_ESCROW_ADDRESS!);
-      await fetch("/api/escrow", {
+      const txHash = await sendUsdcToDeposit(signer, parseFloat(amountUSD), process.env.NEXT_PUBLIC_ESCROW_ADDRESS);
+      const response = await fetch("/api/escrow", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ listingId, txHash, amountUSD, email: account?.username || null, walletAddress: address }),
       });
-      setChat((prev) => [...prev, `✅ Escrow deposit of $${amountUSD} USDC submitted: ${txHash}`]);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to log transaction");
+      }
+      const result = await response.json();
+      setChat((prev) => [...prev, `✅ Escrow deposit of $${amountUSD} USDC submitted: ${result.txHash}`]);
     } catch (e) {
       console.error("Deposit error:", e);
       setChat((prev) => [...prev, `❌ Deposit failed: ${e instanceof Error ? e.message : "Unknown error"}`]);
@@ -753,186 +827,682 @@ function Home() {
   };
 
   return (
-    <div className="container">
-      <div className="header">
-        <h1 className="main-title">🏠 aRentic</h1>
-        <p className="subtitle">The smartest way to find and schedule your next rental with crypto escrow.</p>
-      </div>
-
-      <div className="pre-schedule-section">
-        <h3>🗓️ Set Your Weekly Availability</h3>
-        <p>Tell us when you're free, and our AI will schedule viewings for you.</p>
-      </div>
-
-      <div className="main-grid">
-        <div className="chat-section">
-          <div className="chat-container">
-            <div className="chat-header">
-              <h2 className="chat-title">
-                💬 Chat
-                {isLoading && <div className="spinner"></div>}
-              </h2>
+    <QueryClientProvider client={queryClient}>
+      <WagmiProvider config={wagmiConfig}>
+        <Web3Wrapper>
+          <div className="container">
+            <div className="header">
+              <h1 className="main-title">🏠 Rental AI Assistant</h1>
+              <p className="subtitle">The smartest way to find and schedule your next rental with crypto escrow.</p>
             </div>
-            <div className="chat-messages">
-              {chat.map((msg, i) => (
-                <div key={i} className={`message-wrapper ${msg.startsWith("👤 You:") ? "user-message" : "system-message"}`}>
-                  <div className={`message ${msg.startsWith("👤 You:") ? "user" : "system"}`}>
-                    <p>{msg}</p>
+
+            <div className="pre-schedule-section">
+              <h3>🗓️ Set Your Weekly Availability</h3>
+              <p>Tell us when you're free, and our AI will schedule viewings for you. (Coming Soon!)</p>
+            </div>
+
+            <div className="main-grid">
+              <div className="chat-section">
+                <div className="chat-container">
+                  <div className="chat-header">
+                    <h2 className="chat-title">
+                      💬 Chat
+                      {isLoading && <div className="spinner"></div>}
+                    </h2>
                   </div>
-                </div>
-              ))}
-              {isLoading && (
-                <div className="message-wrapper system-message">
-                  <div className="message system">
-                    <div className="typing-indicator">
-                      <div className="dot"></div>
-                      <div className="dot"></div>
-                      <div className="dot"></div>
+                  <div className="chat-messages">
+                    {chat.map((msg, i) => {
+                      const isUser = msg.startsWith("👤 You:");
+                      return (
+                        <div key={i} className={`message-wrapper ${isUser ? "user-message" : "system-message"}`}>
+                          <div className={`message ${isUser ? "user" : "system"}`}>
+                            <p>{msg}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {isLoading && (
+                      <div className="message-wrapper system-message">
+                        <div className="message system">
+                          <div className="typing-indicator">
+                            <div className="dot"></div>
+                            <div className="dot"></div>
+                            <div className="dot"></div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="input-area">
+                    <div className="input-wrapper">
+                      <input
+                        type="text"
+                        className="chat-input"
+                        value={prompt}
+                        onChange={(e) => setPrompt(e.target.value)}
+                        onKeyPress={(e) => e.key === "Enter" && handleSubmit()}
+                        placeholder="e.g., 2BR 1BA apartment in Williamsburg, New York under $3000"
+                        disabled={isLoading}
+                      />
+                      <select
+                        className="state-select"
+                        value={selectedState}
+                        onChange={(e) => setSelectedState(e.target.value)}
+                        disabled={isLoading}
+                      >
+                        {usStates.map((state) => (
+                          <option key={state.code} value={state.code}>
+                            {state.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={handleSubmit}
+                        className="send-button"
+                        disabled={isLoading || !prompt.trim()}
+                      >
+                        ✈️ Search
+                      </button>
                     </div>
                   </div>
                 </div>
-              )}
-            </div>
-            <div className="input-area">
-              <div className="input-wrapper">
-                <input
-                  type="text"
-                  className="chat-input"
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  onKeyPress={(e) => e.key === "Enter" && handleSubmit()}
-                  placeholder="e.g., 2BR 1BA apartment in Williamsburg, New York under $3000"
-                  disabled={isLoading}
-                />
-                <select
-                  className="state-select"
-                  value={selectedState}
-                  onChange={(e) => setSelectedState(e.target.value)}
-                  disabled={isLoading}
-                >
-                  {usStates.map((state) => (
-                    <option key={state.code} value={state.code}>
-                      {state.name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={handleSubmit}
-                  className="send-button"
-                  disabled={isLoading || !prompt.trim()}
-                >
-                  ✈️ Search
-                </button>
               </div>
-            </div>
-          </div>
-        </div>
 
-        <div className="sidebar">
-          <div className="status-panel">
-            <h3 className="panel-title">⚡ Progress</h3>
-            <div className="status-items">
-              {listing && <div className="status-item complete"><div className="status-dot"></div><span>Property Search</span></div>}
-              {listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Contact Found</span></div>}
-              {emailDraft && <div className="status-item complete"><div className="status-dot"></div><span>Email & Invite Staged</span></div>}
-              {authenticated && emailDraft && listing?.agent.email && (
-                <div className="status-item complete"><div className="status-dot"></div><span>Authenticated to Send</span></div>
-              )}
-              {address && <div className="status-item complete"><div className="status-dot"></div><span>Wallet Connected</span></div>}
-            </div>
-          </div>
-          {listing && (
-            <div className="listing-panel">
-              <h3 className="panel-title">🏠 Selected Property</h3>
-              <p><strong>Address:</strong> {listing.address}</p>
-              <p><strong>Price:</strong> ${listing.price.toLocaleString()}/month</p>
-              <p><strong>Beds / Baths:</strong> {listing.bedrooms} bed / {listing.bathrooms} bath</p>
-              <p><strong>Type:</strong> {listing.propertyType}</p>
-              <p>
-                <strong>Listing:</strong>{" "}
-                {listing.detailUrl !== "#" ? (
-                  <a href={formatUrl(listing.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
-                    View Agent Site
-                  </a>
-                ) : (
-                  <span style={{ color: "#d1d5db" }}>No agent site available</span>
+              <div className="sidebar">
+                <div className="status-panel">
+                  <h3 className="panel-title">⚡ Progress</h3>
+                  <div className="status-items">
+                    {listing && <div className="status-item complete"><div className="status-dot"></div><span>Property Search</span></div>}
+                    {listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Contact Found</span></div>}
+                    {emailDraft && <div className="status-item complete"><div className="status-dot"></div><span>Email & Invite Staged</span></div>}
+                    {authenticated && emailDraft && listing?.agent.email && (
+                      <div className="status-item complete"><div className="status-dot"></div><span>Authenticated to Send</span></div>
+                    )}
+                    {address && <div className="status-item complete"><div className="status-dot"></div><span>Wallet Connected</span></div>}
+                  </div>
+                </div>
+                {listing && (
+                  <div className="listing-panel">
+                    <h3 className="panel-title">🏠 Selected Property</h3>
+                    <p><strong>Address:</strong> {listing.address}</p>
+                    <p><strong>Price:</strong> ${listing.price.toLocaleString()}/month</p>
+                    <p><strong>Beds / Baths:</strong> {listing.bedrooms} bed / {listing.bathrooms} bath</p>
+                    <p><strong>Type:</strong> {listing.propertyType}</p>
+                    <p>
+                      <strong>Listing:</strong>{" "}
+                      {listing.detailUrl !== "#" ? (
+                        <a href={formatUrl(listing.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
+                          View Agent Site
+                        </a>
+                      ) : (
+                        <span style={{ color: "#d1d5db" }}>No agent site available</span>
+                      )}
+                    </p>
+                  </div>
                 )}
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="listings-section">
-        <h3 className="listings-title">Your Best Matches</h3>
-        <p className="listings-subtitle">Make a more detailed prompt to get a better match.</p>
-        <div className="listings-grid">
-          <ListingCard
-            list={testListing}
-            handleGenerateDraft={handleGenerateDraft}
-            listingDrafts={listingDrafts}
-            calendarTime={calendarTime}
-            setCalendarTime={setCalendarTime}
-            authenticated={authenticated}
-            handleLogin={handleLogin}
-            sendEmailAndCreateInvite={sendEmailAndCreateInvite}
-            finalActionLoading={finalActionLoading}
-            handleDeposit={handleDeposit}
-            userWalletAddress={address || null}
-          />
-          {allListings.slice(0, showAllListings ? allListings.length : 3).map((list, index) => (
-            <ListingCard
-              key={index}
-              list={list}
-              handleGenerateDraft={handleGenerateDraft}
-              listingDrafts={listingDrafts}
-              calendarTime={calendarTime}
-              setCalendarTime={setCalendarTime}
-              authenticated={authenticated}
-              handleLogin={handleLogin}
-              sendEmailAndCreateInvite={sendEmailAndCreateInvite}
-              finalActionLoading={finalActionLoading}
-              handleDeposit={handleDeposit}
-              userWalletAddress={address || null}
-            />
-          ))}
-        </div>
-        {allListings.length > 3 && (
-          <button onClick={() => setShowAllListings(!showAllListings)} className="see-more-button">
-            {showAllListings ? "Show Less" : `See More (${allListings.length - 3} more)`}
-          </button>
-        )}
-      </div>
-
-      {emailDraft && (
-        <div className="details-panel">
-          <h3 className="details-title">📋 Review Draft</h3>
-          <div className="details-grid">
-            <div className="email-section">
-              <h4 className="section-title email-title">📝 Inquiry Email</h4>
-              <div className="instructions">
-                <strong>Action:</strong>{" "}
-                {authenticated && listing?.agent.email
-                  ? "Review the email and calendar invite."
-                  : "Authorize Microsoft to send or copy the draft below."}
               </div>
-              <textarea className="email-textarea" value={emailDraft} onChange={(e) => setEmailDraft(e.target.value)} />
             </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
-export default function Page() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <AppOnchainProvider>
-        <Web3Wrapper>
-          <Home />
+            <div className="listings-section">
+              <h3 className="listings-title">Your Best Matches</h3>
+              <p className="listings-subtitle">Make a more detailed prompt to get a better match.</p>
+              <div className="listings-grid">
+                <ListingCard
+                  list={testListing}
+                  handleGenerateDraft={handleGenerateDraft}
+                  listingDrafts={listingDrafts}
+                  calendarTime={calendarTime}
+                  setCalendarTime={setCalendarTime}
+                  authenticated={authenticated}
+                  handleLogin={handleLogin}
+                  sendEmailAndCreateInvite={sendEmailAndCreateInvite}
+                  finalActionLoading={finalActionLoading}
+                  handleDeposit={handleDeposit}
+                  userWalletAddress={address || null}
+                />
+                {allListings.slice(0, showAllListings ? allListings.length : 3).map((list, index) => (
+                  <ListingCard
+                    key={index}
+                    list={list}
+                    handleGenerateDraft={handleGenerateDraft}
+                    listingDrafts={listingDrafts}
+                    calendarTime={calendarTime}
+                    setCalendarTime={setCalendarTime}
+                    authenticated={authenticated}
+                    handleLogin={handleLogin}
+                    sendEmailAndCreateInvite={sendEmailAndCreateInvite}
+                    finalActionLoading={finalActionLoading}
+                    handleDeposit={handleDeposit}
+                    userWalletAddress={address || null}
+                  />
+                ))}
+              </div>
+              {allListings.length > 3 && (
+                <button onClick={() => setShowAllListings(!showAllListings)} className="see-more-button">
+                  {showAllListings ? "Show Less" : `See More (${allListings.length - 3} more)`}
+                </button>
+              )}
+            </div>
+
+            {emailDraft && (
+              <div className="details-panel">
+                <h3 className="details-title">📋 Review Draft</h3>
+                <div className="details-grid">
+                  <div className="email-section">
+                    <h4 className="section-title email-title">📝 Inquiry Email</h4>
+                    <div className="instructions">
+                      <strong>Action:</strong>{" "}
+                      {authenticated && listing?.agent.email
+                        ? "Review the email and calendar invite."
+                        : "Authorize Microsoft to send or copy the draft below."}
+                    </div>
+                    <textarea
+                      className="email-textarea"
+                      value={emailDraft}
+                      onChange={(e) => setEmailDraft(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <style jsx>{`
+              .container {
+                min-height: 100vh;
+                background: linear-gradient(135deg, #0f172a 0%, #581c87 50%, #0f172a 100%);
+                padding: 2rem;
+              }
+              .header {
+                text-align: center;
+                margin-bottom: 3rem;
+                padding-top: 1rem;
+              }
+              .main-title {
+                font-size: 2.5rem;
+                font-weight: bold;
+                color: white;
+                margin-bottom: 0.5rem;
+                background: linear-gradient(45deg, #60a5fa, #a855f7);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+              }
+              .subtitle {
+                font-size: 1.1rem;
+                color: #d1d5db;
+                font-weight: 300;
+              }
+              .pre-schedule-section {
+                text-align: center;
+                color: white;
+                background: rgba(255, 255, 255, 0.1);
+                padding: 1rem;
+                border-radius: 1rem;
+                max-width: 800px;
+                margin: 2rem auto;
+              }
+              .listings-subtitle {
+                color: #d1d5db;
+                text-align: center;
+                margin-top: -1rem;
+                margin-bottom: 2rem;
+              }
+              .see-more-button {
+                display: block;
+                margin: 2rem auto;
+                padding: 0.75rem 2rem;
+                background: transparent;
+                border: 1px solid white;
+                color: white;
+                border-radius: 0.5rem;
+                cursor: pointer;
+              }
+              .see-more-button:hover {
+                background: rgba(255, 255, 255, 0.1);
+              }
+              .main-grid {
+                display: grid;
+                grid-template-columns: 2fr 1fr;
+                gap: 2rem;
+                max-width: 1200px;
+                margin: 0 auto 3rem;
+              }
+              @media (max-width: 768px) {
+                .main-grid {
+                  grid-template-columns: 1fr;
+                }
+              }
+              .chat-section {
+                width: 100%;
+              }
+              .chat-container {
+                background: rgba(255, 255, 255, 0.05);
+                backdrop-filter: blur(20px);
+                border-radius: 1rem;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+              }
+              .chat-header {
+                background: linear-gradient(45deg, #2563eb, #9333ea);
+                padding: 1rem;
+                border-radius: 1rem 1rem 0 0;
+              }
+              .chat-title {
+                color: white;
+                font-size: 1.25rem;
+                font-weight: bold;
+                margin: 0;
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+              }
+              .spinner {
+                width: 1.25rem;
+                height: 1.25rem;
+                border: 2px solid transparent;
+                border-top: 2px solid white;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+              }
+              .chat-messages {
+                height: 20rem;
+                overflow-y: auto;
+                padding: 1.5rem;
+                background: rgba(15, 23, 42, 0.8);
+                display: flex;
+                flex-direction: column;
+                gap: 0.75rem;
+              }
+              .message-wrapper {
+                display: flex;
+                animation: fadeIn 0.3s ease-out;
+              }
+              .message-wrapper.user-message {
+                justify-content: flex-end;
+              }
+              .message-wrapper.system-message {
+                justify-content: flex-start;
+              }
+              .message {
+                max-width: 80%;
+                padding: 0.75rem 1rem;
+                border-radius: 0.75rem;
+              }
+              .message.user {
+                background: linear-gradient(45deg, #3b82f6, #9333ea);
+                color: white;
+              }
+              .message.system {
+                background: rgba(255, 255, 255, 0.1);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+              }
+              .message p {
+                margin: 0;
+                font-size: 0.9rem;
+                line-height: 1.4;
+              }
+              .typing-indicator {
+                display: flex;
+                gap: 0.4rem;
+              }
+              .dot {
+                width: 0.4rem;
+                height: 0.4rem;
+                background: #60a5fa;
+                border-radius: 50%;
+                animation: bounce 1.2s ease-in-out infinite both;
+              }
+              .dot:nth-child(1) {
+                animation-delay: -0.24s;
+              }
+              .dot:nth-child(2) {
+                animation-delay: -0.12s;
+              }
+              .input-area {
+                padding: 1rem;
+                background: rgba(15, 23, 42, 0.8);
+                border-top: 1px solid rgba(255, 255, 255, 0.1);
+              }
+              .input-wrapper {
+                display: flex;
+                gap: 0.5rem;
+                align-items: center;
+              }
+              .chat-input {
+                flex: 1;
+                padding: 0.75rem 1rem;
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 0.5rem;
+                color: white;
+                outline: none;
+              }
+              .chat-input::placeholder {
+                color: #9ca3af;
+              }
+              .chat-input:focus {
+                border-color: #3b82f6;
+              }
+              .state-select {
+                padding: 0.75rem;
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 0.5rem;
+                color: white;
+                cursor: pointer;
+              }
+              .state-select:focus {
+                border-color: #9333ea;
+              }
+              .state-select option {
+                color: #000000;
+                background: #ffffff;
+              }
+              .state-select option:hover {
+                background: #e0e7ff;
+              }
+              .send-button {
+                background: linear-gradient(45deg, #2563eb, #9333ea);
+                color: white;
+                font-weight: 600;
+                padding: 0.75rem 1.5rem;
+                border: none;
+                border-radius: 0.5rem;
+                cursor: pointer;
+              }
+              .send-button:hover:not(:disabled) {
+                transform: scale(1.05);
+              }
+              .send-button:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+              }
+              .sidebar {
+                display: flex;
+                flex-direction: column;
+                gap: 1.5rem;
+              }
+              .status-panel,
+              .listing-panel {
+                background: rgba(255, 255, 255, 0.05);
+                backdrop-filter: blur(20px);
+                border-radius: 1rem;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                padding: 1.5rem;
+                box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+              }
+              .panel-title {
+                color: white;
+                font-size: 1.25rem;
+                font-weight: bold;
+                margin: 0 0 1rem;
+              }
+              .status-items {
+                display: flex;
+                flex-direction: column;
+                gap: 0.5rem;
+              }
+              .status-item {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                padding: 0.5rem;
+                border-radius: 0.5rem;
+                background: rgba(34, 197, 94, 0.1);
+                border: 1px solid rgba(34, 197, 94, 0.2);
+              }
+              .status-dot {
+                width: 0.5rem;
+                height: 0.5rem;
+                border-radius: 50%;
+                background: #22c55e;
+              }
+              .status-item span {
+                color: white;
+                font-size: 0.9rem;
+              }
+              .listing-panel p {
+                color: white;
+                font-size: 0.9rem;
+                margin: 0.5rem 0;
+              }
+              .agent-link {
+                color: #60a5fa;
+                text-decoration: underline;
+              }
+              .agent-link:hover {
+                color: #93c5fd;
+              }
+              .listings-section {
+                max-width: 1200px;
+                margin: 0 auto 3rem;
+              }
+              .listings-title {
+                color: white;
+                font-size: 1.5rem;
+                font-weight: bold;
+                margin: 0 0 1.5rem;
+              }
+              .listings-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+                gap: 1.5rem;
+              }
+              .listing-card {
+                background: rgba(255, 255, 255, 0.05);
+                backdrop-filter: blur(20px);
+                border-radius: 1rem;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                padding: 1.5rem;
+                box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+                transition: transform 0.2s;
+              }
+              .listing-card:hover {
+                transform: scale(1.02);
+              }
+              .listing-card p {
+                color: white;
+                font-size: 0.9rem;
+                margin: 0.5rem 0;
+              }
+              .generate-draft-button {
+                background: linear-gradient(45deg, #3b82f6, #9333ea);
+                color: white;
+                font-weight: 600;
+                padding: 0.75rem 1.5rem;
+                border: none;
+                border-radius: 0.5rem;
+                cursor: pointer;
+                margin-top: 1rem;
+                width: 100%;
+              }
+              .generate-draft-button:hover:not(:disabled) {
+                transform: scale(1.05);
+              }
+              .generate-draft-button:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+              }
+              .onramp-button {
+                background: linear-gradient(45deg, #16a34a, #059669);
+                color: white;
+                font-weight: 600;
+                padding: 0.75rem 1.5rem;
+                border: none;
+                border-radius: 0.5rem;
+                cursor: pointer;
+                margin-top: 0.5rem;
+                width: 100%;
+              }
+              .onramp-button:hover:not(:disabled) {
+                transform: scale(1.05);
+              }
+              .draft-container {
+                margin-top: 1rem;
+                display: flex;
+                flex-direction: column;
+                gap: 0.75rem;
+              }
+              .draft-textarea {
+                width: 100%;
+                height: 6rem;
+                padding: 0.75rem;
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 0.5rem;
+                color: white;
+                resize: none;
+                outline: none;
+              }
+              .datetime-input {
+                height: 2.5rem;
+              }
+              .copy-draft-button {
+                background: linear-gradient(45deg, #16a34a, #059669);
+                color: white;
+                font-weight: 600;
+                padding: 0.75rem 1.5rem;
+                border: none;
+                border-radius: 0.5rem;
+                cursor: pointer;
+              }
+              .copy-draft-button:hover {
+                transform: scale(1.05);
+              }
+              .auth-button {
+                background: linear-gradient(45deg, #2563eb, #9333ea);
+                color: white;
+                font-weight: 600;
+                padding: 0.75rem 1.5rem;
+                border: none;
+                border-radius: 0.5rem;
+                cursor: pointer;
+              }
+              .auth-button:hover {
+                transform: scale(1.05);
+              }
+              .execute-button {
+                background: linear-gradient(45deg, #16a34a, #059669);
+                color: white;
+                font-weight: 600;
+                padding: 0.75rem 1.5rem;
+                border: none;
+                border-radius: 0.5rem;
+                cursor: pointer;
+              }
+              .execute-button:hover:not(:disabled) {
+                transform: scale(1.05);
+              }
+              .execute-button:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+              }
+              .deposit-button {
+                background: linear-gradient(45deg, #d97706, #b45309);
+                color: white;
+                font-weight: 600;
+                padding: 0.75rem 1.5rem;
+                border: none;
+                border-radius: 0.5rem;
+                cursor: pointer;
+                margin-top: 0.5rem;
+                width: 100%;
+              }
+              .deposit-button:hover:not(:disabled) {
+                transform: scale(1.05);
+              }
+              .deposit-button:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+              }
+              .details-panel {
+                max-width: 1200px;
+                margin: 0 auto;
+                background: rgba(255, 255, 255, 0.05);
+                backdrop-filter: blur(20px);
+                border-radius: 1rem;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                padding: 1.5rem;
+                box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+              }
+              .details-title {
+                color: white;
+                font-size: 1.5rem;
+                font-weight: bold;
+                margin: 0 0 1.5rem;
+              }
+              .details-grid {
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 1.5rem;
+              }
+              .email-section {
+                display: flex;
+                flex-direction: column;
+                gap: 1rem;
+              }
+              .section-title {
+                font-size: 1.1rem;
+                font-weight: 600;
+                margin: 0;
+              }
+              .email-title {
+                color: #93c5fd;
+              }
+              .instructions {
+                padding: 0.75rem;
+                background: rgba(30, 64, 175, 0.2);
+                border-left: 3px solid #60a5fa;
+                color: #e0e7ff;
+                font-size: 0.9rem;
+                border-radius: 0.5rem;
+              }
+              .email-textarea {
+                width: 100%;
+                height: 10rem;
+                padding: 1rem;
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 0.5rem;
+                color: white;
+                resize: none;
+                outline: none;
+              }
+              .email-textarea:focus {
+                border-color: #3b82f6;
+              }
+              @keyframes fadeIn {
+                from {
+                  opacity: 0;
+                  transform: translateY(10px);
+                }
+                to {
+                  opacity: 1;
+                  transform: translateY(0);
+                }
+              }
+              @keyframes spin {
+                to {
+                  transform: rotate(360deg);
+                }
+              }
+              @keyframes bounce {
+                0%,
+                80%,
+                100% {
+                  transform: scale(0);
+                }
+                40% {
+                  transform: scale(1);
+                }
+              }
+            `}</style>
+          </div>
         </Web3Wrapper>
-      </AppOnchainProvider>
+      </WagmiProvider>
     </QueryClientProvider>
   );
 }
+
+export default Home;
