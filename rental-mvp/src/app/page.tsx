@@ -1,11 +1,8 @@
-
 "use client";
 
 import { useState, useEffect, ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createConfig, http, WagmiProvider, useConnect, useAccount, useSignMessage, useWalletClient } from "wagmi";
-import { base } from "wagmi/chains";
-import { coinbaseWallet } from "@wagmi/connectors";
+import CoinbaseWalletSDK from "@coinbase/wallet-sdk";
 import { AppOnchainProvider } from "@/components/OnchainProvider";
 import { sendUsdcToDeposit } from "@/lib/escrow";
 import "./styles.css";
@@ -15,6 +12,13 @@ export const renderMode = "force-dynamic";
 
 // Create QueryClient instance
 const queryClient = new QueryClient();
+
+// Initialize Coinbase Wallet SDK
+const coinbaseWallet = new CoinbaseWalletSDK({
+  appName: "aRentic",
+  appLogoUrl: "/logo-48.png",
+  appChainIds: [8453], // Base chain ID
+});
 
 // Define interfaces for TypeScript
 interface Listing {
@@ -50,7 +54,6 @@ interface ParsedPrompt {
 const usStates = [
   { code: "AL", name: "Alabama" },
   { code: "AK", name: "Alaska" },
-  // Add remaining states here for completeness
   { code: "AZ", name: "Arizona" },
   { code: "AR", name: "Arkansas" },
   { code: "CA", name: "California" },
@@ -148,13 +151,29 @@ const loadJsPDF = async () => {
 };
 
 // Custom ConnectWalletButton component
-const ConnectWalletButton = () => {
-  const { connect, connectors } = useConnect();
-  const { isConnecting } = useAccount();
+const ConnectWalletButton = ({ onConnect }: { onConnect: (address: string) => void }) => {
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  const handleConnect = async () => {
+    setIsConnecting(true);
+    try {
+      const provider = coinbaseWallet.makeWeb3Provider();
+      const accounts = (await provider.request({
+        method: "eth_requestAccounts",
+      })) as string[];
+      if (accounts.length > 0) {
+        onConnect(accounts[0]);
+      }
+    } catch (error) {
+      console.error("Wallet connection failed:", error);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
 
   return (
     <button
-      onClick={() => connect({ connector: connectors[0] })}
+      onClick={handleConnect}
       className="auth-button"
       disabled={isConnecting}
     >
@@ -171,14 +190,27 @@ function Web3Wrapper({
   children: ReactNode;
   onWalletConnect: (address: string) => void;
 }) {
-  const { isConnected, address } = useAccount();
-  const { signMessageAsync } = useSignMessage();
+  const [isConnected, setIsConnected] = useState(false);
+  const [address, setAddress] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isConnected && address) {
-      onWalletConnect(address);
-    }
-  }, [isConnected, address, onWalletConnect]);
+    const checkConnection = async () => {
+      try {
+        const provider = coinbaseWallet.makeWeb3Provider();
+        const accounts = (await provider.request({
+          method: "eth_accounts",
+        })) as string[];
+        if (accounts.length > 0) {
+          setIsConnected(true);
+          setAddress(accounts[0]);
+          onWalletConnect(accounts[0]);
+        }
+      } catch (error) {
+        console.error("Error checking wallet connection:", error);
+      }
+    };
+    checkConnection();
+  }, [onWalletConnect]);
 
   console.log("Web3Wrapper rendered, isConnected:", isConnected);
   return (
@@ -189,7 +221,11 @@ function Web3Wrapper({
         </p>
       ) : (
         <div style={{ display: "flex", justifyContent: "center", margin: "1rem 0" }}>
-          <ConnectWalletButton />
+          <ConnectWalletButton onConnect={(addr) => {
+            setIsConnected(true);
+            setAddress(addr);
+            onWalletConnect(addr);
+          }} />
         </div>
       )}
       {children}
@@ -380,26 +416,22 @@ const getStreetViewUrl = (address: string) => {
   return url;
 };
 
-// Custom hook to convert WalletClient to ethers.Signer
+// Custom hook to convert Coinbase Wallet provider to ethers.Signer
 const useEthersSigner = () => {
   const [signer, setSigner] = useState<any>(null);
 
   useEffect(() => {
     const initializeSigner = async () => {
       console.log("Initializing signer...");
-      const { data: walletClient } = useWalletClient();
-      if (walletClient) {
+      try {
+        const provider = coinbaseWallet.makeWeb3Provider();
         const { BrowserProvider } = await loadEthers();
-        const provider = new BrowserProvider(walletClient.transport, base);
-        try {
-          const signer = await provider.getSigner();
-          setSigner(signer);
-          console.log("Signer initialized");
-        } catch (error) {
-          console.error("Failed to get signer:", error);
-          setSigner(null);
-        }
-      } else {
+        const ethersProvider = new BrowserProvider(provider);
+        const signer = await ethersProvider.getSigner();
+        setSigner(signer);
+        console.log("Signer initialized");
+      } catch (error) {
+        console.error("Failed to get signer:", error);
         setSigner(null);
       }
     };
@@ -407,6 +439,27 @@ const useEthersSigner = () => {
   }, []);
 
   return signer;
+};
+// Function to sign a message with Coinbase Wallet
+const useSignMessage = () => {
+  const signMessageAsync = async ({ message }: { message: string }) => {
+    try {
+      const provider = coinbaseWallet.makeWeb3Provider();
+      const accounts = (await provider.request({
+        method: "eth_accounts",
+      })) as string[];
+      if (accounts.length === 0) throw new Error("No accounts connected");
+      const signature = (await provider.request({
+        method: "personal_sign",
+        params: [message, accounts[0]],
+      })) as string;
+      return signature;
+    } catch (error) {
+      console.error("Sign message failed:", error);
+      throw error;
+    }
+  };
+  return { signMessageAsync };
 };
 
 // Function to format URL with protocol if missing
@@ -438,15 +491,14 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   const [msalInstance, setMsalInstance] = useState<any>(null);
 
   const signer = useEthersSigner();
+  const { signMessageAsync } = useSignMessage();
 
   // Update wallet address when connected
-  const { address } = useAccount();
   useEffect(() => {
-    if (address) {
-      setUserWalletAddress(address);
-      onWalletConnect(address);
+    if (userWalletAddress) {
+      onWalletConnect(userWalletAddress);
     }
-  }, [address, onWalletConnect]);
+  }, [userWalletAddress, onWalletConnect]);
 
   // Initialize MSAL
   useEffect(() => {
@@ -495,7 +547,6 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     if (authenticated && account?.username && userWalletAddress) {
       const linkWallet = async () => {
         try {
-          const { signMessageAsync } = useSignMessage();
           const message = `Link wallet ${userWalletAddress} to ${account.username}`;
           const signature = await signMessageAsync({ message });
           const response = await fetch("/api/user-wallet", {
@@ -515,7 +566,7 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
       };
       linkWallet();
     }
-  }, [authenticated, account, userWalletAddress]);
+  }, [authenticated, account, userWalletAddress, signMessageAsync]);
 
   const handleLogin = async () => {
     if (!msalInstance) return;
@@ -928,9 +979,6 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
 
     try {
       const { ethers } = await loadEthers();
-      const { signMessageAsync } = useSignMessage();
-
-      // Check USDC balance
       const provider = signer.provider || new ethers.JsonRpcProvider(process.env.BASE_RPC_URL || "https://mainnet.base.org");
       const usdcContract = new ethers.Contract(
         process.env.NEXT_PUBLIC_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -946,7 +994,6 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
         return;
       }
 
-      // Validate escrow address
       const escrowCode = await provider.getCode(process.env.NEXT_PUBLIC_ESCROW_ADDRESS || "");
       if (escrowCode === "0x") {
         setChat((prev) => [...prev, "⚠️ Invalid escrow address. Please contact support."]);
@@ -956,7 +1003,6 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
 
       const txHash = await sendUsdcToDeposit(signer, parseFloat(amountUSD), process.env.NEXT_PUBLIC_ESCROW_ADDRESS!);
 
-      // Verify transaction
       const receipt = await provider.getTransactionReceipt(txHash);
       if (receipt && receipt.status === 1) {
         const message = `Deposit ${amountUSD} USDC for listing ${listingId} from ${userWalletAddress}`;
@@ -1239,31 +1285,16 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
 
 // Export the top-level Page component with providers wrapping Home
 export default function Page() {
-  const config = createConfig({
-    chains: [base],
-    connectors: [
-      coinbaseWallet({
-        appName: "aRentic",
-        preference: "all",
-      }),
-    ],
-    transports: {
-      [base.id]: http(),
-    },
-  });
-
   return (
-    <WagmiProvider config={config}>
-      <QueryClientProvider client={queryClient}>
-        <AppOnchainProvider>
-          <Web3Wrapper onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)}>
-            <div className="wallet-status">
-              <ConnectWalletButton />
-            </div>
-            <Home onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)} />
-          </Web3Wrapper>
-        </AppOnchainProvider>
-      </QueryClientProvider>
-    </WagmiProvider>
+    <QueryClientProvider client={queryClient}>
+      <AppOnchainProvider>
+        <Web3Wrapper onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)}>
+          <div className="wallet-status">
+            <ConnectWalletButton onConnect={(address) => console.log(`Wallet connected: ${address}`)} />
+          </div>
+          <Home onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)} />
+        </Web3Wrapper>
+      </AppOnchainProvider>
+    </QueryClientProvider>
   );
 }
