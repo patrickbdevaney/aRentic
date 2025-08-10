@@ -1,16 +1,16 @@
-'use client';
-import React from 'react';
-import { OnchainKitProvider } from '@coinbase/onchainkit';
-import { WagmiProvider, createConfig, http } from 'wagmi';
-import { base } from 'wagmi/chains';
-import { coinbaseWallet } from 'wagmi/connectors';
+"use client";
+import React from "react";
+import { OnchainKitProvider } from "@coinbase/onchainkit";
+import { createConfig, http } from "wagmi";
+import { base } from "wagmi/chains";
+import { coinbaseWallet } from "wagmi/connectors";
 
 const wagmiConfig = createConfig({
     chains: [base],
     connectors: [
         coinbaseWallet({
-            appName: 'Rental AI Assistant',
-            preference: 'smartWalletOnly',
+            appName: "Rental AI Assistant",
+            preference: "smartWalletOnly",
         }),
     ],
     transports: {
@@ -26,21 +26,21 @@ export function AppOnchainProvider({ children }: { children: React.ReactNode }) 
             chain={base}
             config={{
                 appearance: {
-                    name: 'Rental AI Assistant',
-                    logo: '/logo-48.png',
-                    mode: 'auto',
-                    theme: 'default',
+                    name: "Rental AI Assistant",
+                    logo: "/logo-48.png",
+                    mode: "auto",
+                    theme: "default",
                 },
                 wallet: {
-                    display: 'modal',
-                    termsUrl: '/terms',
-                    privacyUrl: '/privacy',
+                    display: "modal", // Use 'modal' as the valid option
+                    termsUrl: "/terms",
+                    privacyUrl: "/privacy",
+                    // Optional: Customize modal size or styling if supported by OnchainKit
+                    // Check OnchainKit docs for additional config options
                 },
             }}
         >
-            <WagmiProvider config={wagmiConfig}>
-                {children}
-            </WagmiProvider>
+            {children}
         </OnchainKitProvider>
     );
 }

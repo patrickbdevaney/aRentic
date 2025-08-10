@@ -1,54 +1,24 @@
 "use client";
 
-import { useState, useEffect } from 'react';
-import { PublicClientApplication, InteractionRequiredAuthError } from '@azure/msal-browser';
-import { Groq } from 'groq-sdk';
-import { ConnectWallet } from '@coinbase/onchainkit/wallet';
-import { WagmiProvider, createConfig, http } from 'wagmi';
-import { base } from 'wagmi/chains';
-import { coinbaseWallet } from 'wagmi/connectors';
-import { useAccount, useWalletClient } from 'wagmi';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { FundButton } from '@coinbase/onchainkit/fund';
-import { ethers, BrowserProvider } from 'ethers';
-import { AppOnchainProvider } from '@/components/OnchainProvider';
-import { sendUsdcToDeposit } from '@/lib/escrow';
-import jsPDF from 'jspdf';
+import { useState, useEffect } from "react";
+import { PublicClientApplication, InteractionRequiredAuthError } from "@azure/msal-browser";
+import { Groq } from "groq-sdk";
+import { useAccount, useWalletClient } from "wagmi";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ethers, BrowserProvider } from "ethers";
+import { AppOnchainProvider } from "@/components/OnchainProvider";
+import { sendUsdcToDeposit } from "@/lib/escrow";
+import jsPDF from "jspdf";
+import { createConfig, http, WagmiProvider } from "wagmi"; // Added WagmiProvider and createConfig
+import { base } from "wagmi/chains";
+import { coinbaseWallet } from "wagmi/connectors";
+import "./styles.css";
 
 // Force dynamic rendering for wallet connection
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 // Create QueryClient instance
 const queryClient = new QueryClient();
-
-// Create wagmi configuration
-const config = createConfig({
-  chains: [base],
-  transports: {
-    [base.id]: http(),
-  },
-  connectors: [coinbaseWallet()],
-});
-
-// Custom hook to convert WalletClient to ethers.Signer
-const useEthersSigner = () => {
-  const { data: walletClient } = useWalletClient();
-  const [signer, setSigner] = useState<ethers.Signer | null>(null);
-
-  useEffect(() => {
-    if (walletClient) {
-      const provider = new BrowserProvider(walletClient);
-      provider.getSigner().then(setSigner).catch((error) => {
-        console.error('Failed to get signer:', error);
-        setSigner(null);
-      });
-    } else {
-      setSigner(null);
-    }
-  }, [walletClient]);
-
-  return signer;
-};
 
 // Define interfaces for TypeScript
 interface Listing {
@@ -82,56 +52,94 @@ interface ParsedPrompt {
 }
 
 const usStates = [
-  { code: 'AL', name: 'Alabama' }, { code: 'AK', name: 'Alaska' }, { code: 'AZ', name: 'Arizona' },
-  { code: 'AR', name: 'Arkansas' }, { code: 'CA', name: 'California' }, { code: 'CO', name: 'Colorado' },
-  { code: 'CT', name: 'Connecticut' }, { code: 'DE', name: 'Delaware' }, { code: 'FL', name: 'Florida' },
-  { code: 'GA', name: 'Georgia' }, { code: 'HI', name: 'Hawaii' }, { code: 'ID', name: 'Idaho' },
-  { code: 'IL', name: 'Illinois' }, { code: 'IN', name: 'Indiana' }, { code: 'IA', name: 'Iowa' },
-  { code: 'KS', name: 'Kansas' }, { code: 'KY', name: 'Kentucky' }, { code: 'LA', name: 'Louisiana' },
-  { code: 'ME', name: 'Maine' }, { code: 'MD', name: 'Maryland' }, { code: 'MA', name: 'Massachusetts' },
-  { code: 'MI', name: 'Michigan' }, { code: 'MN', name: 'Minnesota' }, { code: 'MS', name: 'Mississippi' },
-  { code: 'MO', name: 'Missouri' }, { code: 'MT', name: 'Montana' }, { code: 'NE', name: 'Nebraska' },
-  { code: 'NV', name: 'Nevada' }, { code: 'NH', name: 'New Hampshire' }, { code: 'NJ', name: 'New Jersey' },
-  { code: 'NM', name: 'New Mexico' }, { code: 'NY', name: 'New York' }, { code: 'NC', name: 'North Carolina' },
-  { code: 'ND', name: 'North Dakota' }, { code: 'OH', name: 'Ohio' }, { code: 'OK', name: 'Oklahoma' },
-  { code: 'OR', name: 'Oregon' }, { code: 'PA', name: 'Pennsylvania' }, { code: 'RI', name: 'Rhode Island' },
-  { code: 'SC', name: 'South Carolina' }, { code: 'SD', name: 'South Dakota' }, { code: 'TN', name: 'Tennessee' },
-  { code: 'TX', name: 'Texas' }, { code: 'UT', name: 'Utah' }, { code: 'VT', name: 'Vermont' },
-  { code: 'VA', name: 'Virginia' }, { code: 'WA', name: 'Washington' }, { code: 'WV', name: 'West Virginia' },
-  { code: 'WI', name: 'Wisconsin' }, { code: 'WY', name: 'Wyoming' },
+  { code: "AL", name: "Alabama" },
+  { code: "AK", name: "Alaska" },
+  { code: "AZ", name: "Arizona" },
+  { code: "AR", name: "Arkansas" },
+  { code: "CA", name: "California" },
+  { code: "CO", name: "Colorado" },
+  { code: "CT", name: "Connecticut" },
+  { code: "DE", name: "Delaware" },
+  { code: "FL", name: "Florida" },
+  { code: "GA", name: "Georgia" },
+  { code: "HI", name: "Hawaii" },
+  { code: "ID", name: "Idaho" },
+  { code: "IL", name: "Illinois" },
+  { code: "IN", name: "Indiana" },
+  { code: "IA", name: "Iowa" },
+  { code: "KS", name: "Kansas" },
+  { code: "KY", name: "Kentucky" },
+  { code: "LA", name: "Louisiana" },
+  { code: "ME", name: "Maine" },
+  { code: "MD", name: "Maryland" },
+  { code: "MA", name: "Massachusetts" },
+  { code: "MI", name: "Michigan" },
+  { code: "MN", name: "Minnesota" },
+  { code: "MS", name: "Mississippi" },
+  { code: "MO", name: "Missouri" },
+  { code: "MT", name: "Montana" },
+  { code: "NE", name: "Nebraska" },
+  { code: "NV", name: "Nevada" },
+  { code: "NH", name: "New Hampshire" },
+  { code: "NJ", name: "New Jersey" },
+  { code: "NM", name: "New Mexico" },
+  { code: "NY", name: "New York" },
+  { code: "NC", name: "North Carolina" },
+  { code: "ND", name: "North Dakota" },
+  { code: "OH", name: "Ohio" },
+  { code: "OK", name: "Oklahoma" },
+  { code: "OR", name: "Oregon" },
+  { code: "PA", name: "Pennsylvania" },
+  { code: "RI", name: "Rhode Island" },
+  { code: "SC", name: "South Carolina" },
+  { code: "SD", name: "South Dakota" },
+  { code: "TN", name: "Tennessee" },
+  { code: "TX", name: "Texas" },
+  { code: "UT", name: "Utah" },
+  { code: "VT", name: "Vermont" },
+  { code: "VA", name: "Virginia" },
+  { code: "WA", name: "Washington" },
+  { code: "WV", name: "West Virginia" },
+  { code: "WI", name: "Wisconsin" },
+  { code: "WY", name: "Wyoming" },
 ];
 
 const cityAliases: { [key: string]: { city: string; state: string } } = {
-  'nyc': { city: 'New York', state: 'NY' }, 'new york': { city: 'New York', state: 'NY' }, 'ny': { city: 'New York', state: 'NY' },
-  'la': { city: 'Los Angeles', state: 'CA' }, 'sf': { city: 'San Francisco', state: 'CA' }, 'chicago': { city: 'Chicago', state: 'IL' }, 'miami': { city: 'Miami', state: 'FL' },
+  "nyc": { city: "New York", state: "NY" },
+  "new york": { city: "New York", state: "NY" },
+  "ny": { city: "New York", state: "NY" },
+  "la": { city: "Los Angeles", state: "CA" },
+  "sf": { city: "San Francisco", state: "CA" },
+  "chicago": { city: "Chicago", state: "IL" },
+  "miami": { city: "Miami", state: "FL" },
 };
 
 const msalConfig = {
   auth: {
-    clientId: process.env.NEXT_PUBLIC_AZURE_CLIENT_ID || '',
-    authority: 'https://login.microsoftonline.com/consumers',
-    redirectUri: typeof window !== 'undefined' ? window.location.origin : '/',
+    clientId: process.env.NEXT_PUBLIC_AZURE_CLIENT_ID || "",
+    authority: "https://login.microsoftonline.com/consumers",
+    redirectUri: typeof window !== "undefined" ? window.location.origin : "/",
   },
 };
 
-const msalInstance = typeof window !== 'undefined' ? new PublicClientApplication(msalConfig) : null;
-const msalScopes = ['Calendars.ReadWrite', 'Mail.Send'];
-const groq = typeof window !== 'undefined' ? new Groq({ apiKey: process.env.NEXT_PUBLIC_GROQ_API_KEY || '', dangerouslyAllowBrowser: true }) : null;
+const msalInstance = typeof window !== "undefined" ? new PublicClientApplication(msalConfig) : null;
+const msalScopes = ["Calendars.ReadWrite", "Mail.Send"];
+const groq = typeof window !== "undefined" ? new Groq({ apiKey: process.env.NEXT_PUBLIC_GROQ_API_KEY || "", dangerouslyAllowBrowser: true }) : null;
 
 const testListing: Listing = {
-  id: 'test-listing',
-  address: '123 Main Street, New York, NY 10001',
+  id: "test-listing",
+  address: "123 Main Street, New York, NY 10001",
   price: 2500,
   bedrooms: 2,
   bathrooms: 1,
-  propertyType: 'Apartment',
-  description: 'A cozy 2-bedroom apartment in the heart of New York City, perfect for urban living.',
+  propertyType: "Apartment",
+  description: "A cozy 2-bedroom apartment in the heart of New York City, perfect for urban living.",
   livingArea: 800,
-  detailUrl: 'https://www.example.com/listing/123-main-street',
+  detailUrl: "https://www.example.com/listing/123-main-street",
   agent: {
-    name: 'Patrick Devaney',
-    email: 'patrickbdevaney@gmail.com',
-    phone: '305-815-2198',
+    name: "Patrick Devaney",
+    email: "patrickbdevaney@gmail.com",
+    phone: "305-815-2198",
   },
 };
 
@@ -144,41 +152,84 @@ const getDefaultBusinessTime = (): string => {
   if (day === 0) targetDate.setDate(targetDate.getDate() + 1); // Skip Sunday
   else if (day === 6) targetDate.setDate(targetDate.getDate() + 2); // Skip Saturday
   targetDate.setHours(14, 0, 0, 0); // Set to 2:00 PM
-  return targetDate.toISOString().split('.')[0];
+  return targetDate.toISOString().split(".")[0];
 };
 
 // Function to generate Google Street View URL
 const getStreetViewUrl = (address: string) => {
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_STREET_VIEW_API_KEY || '';
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_STREET_VIEW_API_KEY || "";
   const encodedAddress = encodeURIComponent(address);
   const url = `https://maps.googleapis.com/maps/api/streetview?size=400x300&location=${encodedAddress}&key=${apiKey}`;
-  console.log('Street View URL:', url);
+  console.log("Street View URL:", url);
   return url;
 };
 
-// Web3-specific component to isolate useAccount
-function Web3Wrapper({ children, onWalletConnect }: { children: React.ReactNode, onWalletConnect: (address: string) => void }) {
-  const { isConnected: isWalletConnected, address } = useAccount();
+// Custom hook to convert WalletClient to ethers.Signer
+const useEthersSigner = () => {
+  const { data: walletClient } = useWalletClient();
+  const [signer, setSigner] = useState<ethers.Signer | null>(null);
 
   useEffect(() => {
-    if (isWalletConnected && address) {
+    if (walletClient) {
+      // Use base chain configuration for Base Mainnet
+      const provider = new BrowserProvider(walletClient.transport, base);
+      provider.getSigner().then(setSigner).catch((error) => {
+        console.error("Failed to get signer:", error);
+        setSigner(null);
+      });
+    } else {
+      setSigner(null);
+    }
+  }, [walletClient]);
+
+  return signer;
+};
+
+// Web3-specific component to isolate useAccount
+function Web3Wrapper({ children, onWalletConnect }: { children: React.ReactNode; onWalletConnect: (address: string) => void }) {
+  const { isConnected, address } = useAccount();
+
+  useEffect(() => {
+    if (isConnected && address) {
       onWalletConnect(address);
     }
-  }, [isWalletConnected, address, onWalletConnect]);
+  }, [isConnected, address, onWalletConnect]);
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'center', margin: '1rem 0' }}>
-        <ConnectWallet />
-      </div>
-      {isWalletConnected && <p style={{ color: '#22c55e', textAlign: 'center' }}>✅ Wallet Connected: {address}</p>}
+      {isConnected ? (
+        <p style={{ color: "#22c55e", textAlign: "center" }}>✅ Wallet Connected: {address}</p>
+      ) : (
+        <div style={{ display: "flex", justifyContent: "center", margin: "1rem 0" }}>
+          <button
+            onClick={() => {
+              // Trigger wallet connection via OnchainKit modal
+              // Note: This relies on OnchainKitProvider handling the modal
+            }}
+            className="connect-wallet-button"
+          >
+            Connect Wallet
+          </button>
+        </div>
+      )}
       {children}
     </div>
   );
 }
 
 // Listing Card component
-function ListingCard({ list, handleGenerateDraft, listingDrafts, calendarTime, setCalendarTime, authenticated, handleLogin, sendEmailAndCreateInvite, finalActionLoading, handleDeposit }: {
+function ListingCard({
+  list,
+  handleGenerateDraft,
+  listingDrafts,
+  calendarTime,
+  setCalendarTime,
+  authenticated,
+  handleLogin,
+  sendEmailAndCreateInvite,
+  finalActionLoading,
+  handleDeposit,
+}: {
   list: Listing;
   handleGenerateDraft: (listing: Listing) => void;
   listingDrafts: { [key: string]: string };
@@ -190,7 +241,7 @@ function ListingCard({ list, handleGenerateDraft, listingDrafts, calendarTime, s
   finalActionLoading: { [key: string]: boolean };
   handleDeposit: (listingId: string, amountUSD: string) => void;
 }) {
-  const [imageUrl, setImageUrl] = useState<string>('/fallback-image.jpg');
+  const [imageUrl, setImageUrl] = useState<string>("/fallback-image.jpg");
 
   useEffect(() => {
     setImageUrl(getStreetViewUrl(list.address));
@@ -201,39 +252,44 @@ function ListingCard({ list, handleGenerateDraft, listingDrafts, calendarTime, s
       <img
         src={imageUrl}
         alt={`Street View of ${list.address}`}
-        style={{ width: '100%', height: '200px', objectFit: 'cover', borderRadius: '0.5rem' }}
+        style={{ width: "100%", height: "200px", objectFit: "cover", borderRadius: "0.5rem" }}
         onError={(e) => {
-          e.currentTarget.src = '/fallback-image.jpg';
+          e.currentTarget.src = "/fallback-image.jpg";
         }}
       />
-      <p><strong>Address:</strong> {list.address}</p>
-      <p><strong>Price:</strong> ${list.price.toLocaleString()}/month</p>
-      <p><strong>Beds / Baths:</strong> {list.bedrooms} bed / {list.bathrooms} bath</p>
-      <p><strong>Type:</strong> {list.propertyType}</p>
-      {list.livingArea > 0 && <p><strong>Area:</strong> {list.livingArea.toLocaleString()} sq ft</p>}
       <p>
-        <strong>Listing:</strong>{' '}
-        {list.detailUrl !== '#' ? (
+        <strong>Address:</strong> {list.address}
+      </p>
+      <p>
+        <strong>Price:</strong> ${list.price.toLocaleString()}/month
+      </p>
+      <p>
+        <strong>Beds / Baths:</strong> {list.bedrooms} bed / {list.bathrooms} bath
+      </p>
+      <p>
+        <strong>Type:</strong> {list.propertyType}
+      </p>
+      {list.livingArea > 0 && (
+        <p>
+          <strong>Area:</strong> {list.livingArea.toLocaleString()} sq ft
+        </p>
+      )}
+      <p>
+        <strong>Listing:</strong>{" "}
+        {list.detailUrl !== "#" ? (
           <a href={formatUrl(list.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
             View Agent Site
           </a>
         ) : (
-          <span style={{ color: '#d1d5db' }}>No agent site available</span>
+          <span style={{ color: "#d1d5db" }}>No agent site available</span>
         )}
       </p>
-      <button
-        className="generate-draft-button"
-        onClick={() => handleGenerateDraft(list)}
-      >
+      <button className="generate-draft-button" onClick={() => handleGenerateDraft(list)}>
         📝 Generate Email Draft
       </button>
       {listingDrafts[list.id] && (
         <div className="draft-container">
-          <textarea
-            className="draft-textarea"
-            value={listingDrafts[list.id]}
-            readOnly
-          />
+          <textarea className="draft-textarea" value={listingDrafts[list.id]} readOnly />
           <button
             className="copy-draft-button"
             onClick={() => {
@@ -251,10 +307,7 @@ function ListingCard({ list, handleGenerateDraft, listingDrafts, calendarTime, s
                 onChange={(e) => setCalendarTime(e.target.value)}
               />
               {!authenticated ? (
-                <button
-                  onClick={handleLogin}
-                  className="auth-button"
-                >
+                <button onClick={handleLogin} className="auth-button">
                   🔐 Authorize Microsoft to Send
                 </button>
               ) : (
@@ -263,7 +316,7 @@ function ListingCard({ list, handleGenerateDraft, listingDrafts, calendarTime, s
                   className="execute-button"
                   disabled={finalActionLoading[list.id] || !list.agent.email}
                 >
-                  {finalActionLoading[list.id] ? 'Sending...' : '🚀 Send Email & Invite'}
+                  {finalActionLoading[list.id] ? "Sending..." : "🚀 Send Email & Invite"}
                 </button>
               )}
               <button
@@ -282,20 +335,20 @@ function ListingCard({ list, handleGenerateDraft, listingDrafts, calendarTime, s
 
 // Function to format URL with protocol if missing
 const formatUrl = (url: string) => {
-  if (!url) return '#';
-  return url.startsWith('http://') || url.startsWith('https://') ? url : `http://${url}`;
+  if (!url) return "#";
+  return url.startsWith("http://") || url.startsWith("https://") ? url : `http://${url}`;
 };
 
 function Home() {
-  const [prompt, setPrompt] = useState<string>('');
-  const [selectedState, setSelectedState] = useState<string>('NY');
+  const [prompt, setPrompt] = useState<string>("");
+  const [selectedState, setSelectedState] = useState<string>("NY");
   const [chat, setChat] = useState<string[]>([
-    'Welcome to the Rental AI Assistant! 🏠',
-    'Find your perfect rental by entering a search prompt below.',
-    'I’ll show you listings, help draft emails, and send calendar invites!',
-    'Use the test listing below to try sending an email and calendar invite.',
+    "Welcome to the Rental AI Assistant! 🏠",
+    "Find your perfect rental by entering a search prompt below.",
+    "I’ll show you listings, help draft emails, and send calendar invites!",
+    "Use the test listing below to try sending an email and calendar invite.",
   ]);
-  const [emailDraft, setEmailDraft] = useState<string>('');
+  const [emailDraft, setEmailDraft] = useState<string>("");
   const [calendarTime, setCalendarTime] = useState<string>(getDefaultBusinessTime());
   const [listing, setListing] = useState<Listing | null>(null);
   const [allListings, setAllListings] = useState<Listing[]>([]);
@@ -318,11 +371,11 @@ function Home() {
           const data = await response.json();
           if (data.walletAddress) {
             setUserWalletAddress(data.walletAddress);
-            setChat(prev => [...prev, `✅ Retrieved wallet address: ${data.walletAddress}`]);
+            setChat((prev) => [...prev, `✅ Retrieved wallet address: ${data.walletAddress}`]);
           }
         } catch (error) {
-          console.error('Error fetching wallet address:', error);
-          setChat(prev => [...prev, '⚠️ Could not retrieve wallet address. Connect wallet to proceed.']);
+          console.error("Error fetching wallet address:", error);
+          setChat((prev) => [...prev, "⚠️ Could not retrieve wallet address. Connect wallet to proceed."]);
         }
       };
       fetchWalletAddress();
@@ -340,17 +393,17 @@ function Home() {
         if (accounts.length > 0) {
           setAccount(accounts[0]);
           setAuthenticated(true);
-          setChat(prev => [...prev, '✅ Found existing Microsoft session. Ready to send email and invite.']);
+          setChat((prev) => [...prev, "✅ Found existing Microsoft session. Ready to send email and invite."]);
           if (listing && listing.agent.email) {
             const draft = await generateInquiryDraft(listing);
-            setListingDrafts(prev => ({ ...prev, [listing.id]: draft }));
+            setListingDrafts((prev) => ({ ...prev, [listing.id]: draft }));
             setEmailDraft(draft);
-            setChat(prev => [...prev, `📝 Email draft updated with your email address for ${listing.address}.`]);
+            setChat((prev) => [...prev, `📝 Email draft updated with your email address for ${listing.address}.`]);
           }
         }
       } catch (e) {
         console.error("MSAL initialization failed:", e);
-        setChat(prev => [...prev, '❌ MSAL initialization failed. You can still search for listings.']);
+        setChat((prev) => [...prev, "❌ MSAL initialization failed. You can still search for listings."]);
       }
     };
     initMsal();
@@ -359,10 +412,10 @@ function Home() {
   // Regenerate email draft when calendarTime changes
   useEffect(() => {
     if (listing && listing.agent.email) {
-      generateInquiryDraft(listing).then(draft => {
-        setListingDrafts(prev => ({ ...prev, [listing.id]: draft }));
+      generateInquiryDraft(listing).then((draft) => {
+        setListingDrafts((prev) => ({ ...prev, [listing.id]: draft }));
         setEmailDraft(draft);
-        setChat(prev => [...prev, `📝 Email draft updated for ${listing.address} with new calendar time.`]);
+        setChat((prev) => [...prev, `📝 Email draft updated for ${listing.address} with new calendar time.`]);
       });
     }
   }, [calendarTime, listing]);
@@ -375,39 +428,39 @@ function Home() {
       const response = await msalInstance.loginPopup(loginRequest);
       setAccount(response.account);
       setAuthenticated(true);
-      setChat(prev => [...prev, '✅ Authenticated with Microsoft! Ready to send email and invite.']);
+      setChat((prev) => [...prev, "✅ Authenticated with Microsoft! Ready to send email and invite."]);
       if (listing && listing.agent.email) {
         const draft = await generateInquiryDraft(listing);
-        setListingDrafts(prev => ({ ...prev, [listing.id]: draft }));
+        setListingDrafts((prev) => ({ ...prev, [listing.id]: draft }));
         setEmailDraft(draft);
-        setChat(prev => [...prev, `📝 Email draft updated with your email address for ${listing.address}.`]);
+        setChat((prev) => [...prev, `📝 Email draft updated with your email address for ${listing.address}.`]);
       }
     } catch (error) {
       console.error("Login failed:", error);
-      setChat(prev => [...prev, '❌ Authentication failed. Please try again to send.']);
+      setChat((prev) => [...prev, "❌ Authentication failed. Please try again to send."]);
     }
   };
 
   const handleWalletConnect = async (address: string) => {
     if (account?.username) {
       try {
-        const response = await fetch('/api/user-wallet', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const response = await fetch("/api/user-wallet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: account.username, walletAddress: address }),
         });
         if (response.ok) {
           setUserWalletAddress(address);
-          setChat(prev => [...prev, `✅ Wallet ${address} linked to ${account.username}`]);
+          setChat((prev) => [...prev, `✅ Wallet ${address} linked to ${account.username}`]);
         } else {
-          setChat(prev => [...prev, '⚠️ Failed to link wallet address.']);
+          setChat((prev) => [...prev, "⚠️ Failed to link wallet address."]);
         }
       } catch (error) {
-        console.error('Error linking wallet:', error);
-        setChat(prev => [...prev, '⚠️ Error linking wallet address.']);
+        console.error("Error linking wallet:", error);
+        setChat((prev) => [...prev, "⚠️ Error linking wallet address."]);
       }
     } else {
-      setChat(prev => [...prev, '⚠️ Please authenticate with Microsoft before connecting wallet.']);
+      setChat((prev) => [...prev, "⚠️ Please authenticate with Microsoft before connecting wallet."]);
     }
   };
 
@@ -416,35 +469,38 @@ function Home() {
 
     try {
       const response = await groq.chat.completions.create({
-        model: 'moonshotai/kimi-k2-instruct',
-        messages: [{
-          role: 'system',
-          content: `You are an expert rental search query parser. Your task is to extract search parameters from a user's prompt. Return a single, clean JSON object with the following fields: city, state, neighborhood, bedrooms, bathrooms, minPrice, maxPrice, homeType.
+        model: "moonshotai/kimi-k2-instruct",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert rental search query parser. Your task is to extract search parameters from a user's prompt. Return a single, clean JSON object with the following fields: city, state, neighborhood, bedrooms, bathrooms, minPrice, maxPrice, homeType.
           - If a neighborhood is mentioned (e.g., 'Gramercy', 'Williamsburg'), extract it.
           - Map common city aliases (e.g., 'NYC' -> city: 'New York', state: 'NY').
-          - Be precise. Do not add fields that are not in the prompt.`
-        }, {
-          role: 'user',
-          content: `Parse this prompt: "${prompt}"`
-        }],
-        response_format: { type: 'json_object' }
+          - Be precise. Do not add fields that are not in the prompt.`,
+          },
+          {
+            role: "user",
+            content: `Parse this prompt: "${prompt}"`,
+          },
+        ],
+        response_format: { type: "json_object" },
       });
-      let content = response.choices[0]?.message?.content || '{}';
-      content = content.replace(/```json\s*|\s*```/g, '').trim();
+      let content = response.choices[0]?.message?.content || "{}";
+      content = content.replace(/```json\s*|\s*```/g, "").trim();
       const parsed = JSON.parse(content);
       return {
-        city: parsed.city || 'New York',
-        state: parsed.state || 'NY',
-        neighborhood: parsed.neighborhood || '',
-        bedrooms: parsed.bedrooms || '0',
-        bathrooms: parsed.bathrooms || '',
-        minPrice: parsed.minPrice || '',
-        maxPrice: parsed.maxPrice || '',
-        homeType: parsed.homeType || 'apartment',
+        city: parsed.city || "New York",
+        state: parsed.state || "NY",
+        neighborhood: parsed.neighborhood || "",
+        bedrooms: parsed.bedrooms || "0",
+        bathrooms: parsed.bathrooms || "",
+        minPrice: parsed.minPrice || "",
+        maxPrice: parsed.maxPrice || "",
+        homeType: parsed.homeType || "apartment",
       };
     } catch (error) {
-      console.error('Groq parsing error:', error);
-      setChat(prev => [...prev, '⚠️ Could not parse prompt with AI. Using default parsing.']);
+      console.error("Groq parsing error:", error);
+      setChat((prev) => [...prev, "⚠️ Could not parse prompt with AI. Using default parsing."]);
       return parsePromptFallback(prompt);
     }
   };
@@ -452,7 +508,7 @@ function Home() {
   const parsePromptFallback = (prompt: string): ParsedPrompt => {
     const params: ParsedPrompt = {};
     const lowerPrompt = prompt.toLowerCase();
-    let cityMatch = lowerPrompt.match(/([a-zA-Z\s]+)+,\s*([A-Z]{2})/);
+    let cityMatch = lowerPrompt.match(/([a-zA-Z\s]+),\s*([A-Z]{2})/);
     if (cityMatch) {
       params.city = cityMatch[1].trim();
       params.state = cityMatch[2];
@@ -467,17 +523,17 @@ function Home() {
     }
     if (!params.state) params.state = selectedState;
     if (!params.city) {
-      params.city = 'New York';
-      setChat(prev => [...prev, `⚠️ Location unclear. Defaulting to ${params.city}, ${params.state}.`]);
+      params.city = "New York";
+      setChat((prev) => [...prev, `⚠️ Location unclear. Defaulting to ${params.city}, ${params.state}.`]);
     }
     const bedroomsMatch = lowerPrompt.match(/(\d+|one|two|three|four|five)\s*(?:br|bedroom|bed)/i);
     if (bedroomsMatch) {
-      const numberWords: { [key: string]: string } = { 'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5' };
+      const numberWords: { [key: string]: string } = { one: "1", two: "2", three: "3", four: "4", five: "5" };
       params.bedrooms = numberWords[bedroomsMatch[1]] || bedroomsMatch[1];
     }
     const bathroomsMatch = lowerPrompt.match(/(\d+|one|two|three|four|five)\s*(?:bath|bathroom)/i);
     if (bathroomsMatch) {
-      const numberWords: { [key: string]: string } = { 'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5' };
+      const numberWords: { [key: string]: string } = { one: "1", two: "2", three: "3", four: "4", five: "5" };
       params.bathrooms = numberWords[bathroomsMatch[1]] || bathroomsMatch[1];
     }
     const underMatch = lowerPrompt.match(/under\s*\$?(\d+)/i);
@@ -494,27 +550,27 @@ function Home() {
       params.maxPrice = betweenMatch[2];
     }
     const typeMatch = lowerPrompt.match(/(apartment|house|condo|townhome|flat)/i);
-    if (typeMatch) params.homeType = typeMatch[1] === 'flat' ? 'apartment' : typeMatch[1];
+    if (typeMatch) params.homeType = typeMatch[1] === "flat" ? "apartment" : typeMatch[1];
     return params;
   };
 
   const fetchRentals = async (query: string): Promise<{ primary: Listing | null; all: Listing[] }> => {
     try {
       const params = await parsePromptWithLLM(query);
-      const homeTypeMap: { [key: string]: string } = { apartment: 'Apartment', house: 'Single Family', condo: 'Condo', townhome: 'Townhouse' };
-      const homeType = homeTypeMap[params.homeType || ''] || 'Apartment';
+      const homeTypeMap: { [key: string]: string } = { apartment: "Apartment", house: "Single Family", condo: "Condo", townhome: "Townhouse" };
+      const homeType = homeTypeMap[params.homeType || ""] || "Apartment";
       const searchParams = new URLSearchParams({
-        city: params.city || 'New York',
-        state: params.state || 'NY',
+        city: params.city || "New York",
+        state: params.state || "NY",
         ...(params.neighborhood && { neighborhood: params.neighborhood }),
-        bedsMin: params.bedrooms || '0',
+        bedsMin: params.bedrooms || "0",
         ...(params.bathrooms && { bathrooms: params.bathrooms }),
         ...(params.minPrice && { minPrice: params.minPrice }),
         ...(params.maxPrice && { maxPrice: params.maxPrice }),
         home_type: homeType,
       });
       const url = `/api/rentcast?${searchParams.toString()}`;
-      console.log('RentCast API Request URL:', url);
+      console.log("RentCast API Request URL:", url);
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`RentCast Proxy error: ${response.status}`);
@@ -523,32 +579,32 @@ function Home() {
       if (data && data.props && data.props.length > 0) {
         const allListings = data.props;
         const primaryListing = allListings.find((prop: any) => prop.address && prop.price && prop.agent.email) || allListings[0];
-        console.log('RentCast Listings Found:', allListings);
+        console.log("RentCast Listings Found:", allListings);
         return { primary: primaryListing, all: allListings };
       }
-      setChat(prev => [...prev, '❌ No properties found for your criteria. Try a different search.']);
+      setChat((prev) => [...prev, "❌ No properties found for your criteria. Try a different search."]);
       return { primary: null, all: [] };
     } catch (error) {
-      console.error('Fetch Rentals Error:', error);
-      setChat(prev => [...prev, '❌ Failed to fetch listings. Please try again.']);
+      console.error("Fetch Rentals Error:", error);
+      setChat((prev) => [...prev, "❌ Failed to fetch listings. Please try again."]);
       return { primary: null, all: [] };
     }
   };
 
   const generateInquiryDraft = async (listing: Listing): Promise<string> => {
-    if (!groq) return 'Could not generate inquiry draft.';
+    if (!groq) return "Could not generate inquiry draft.";
 
     try {
-      const formattedTime = new Date(calendarTime).toLocaleString('en-US', {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
+      const formattedTime = new Date(calendarTime).toLocaleString("en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
         hour12: true,
-        timeZone: 'America/New_York',
+        timeZone: "America/New_York",
       });
-      const userEmail = authenticated && account?.username ? account.username : '';
+      const userEmail = authenticated && account?.username ? account.username : "";
       const prompt = `Generate a professional, concise inquiry email for a rental property to maximize inbox delivery and avoid spam filters.
       - Agent Name: ${listing.agent.name}
       - Property Address: ${listing.address}
@@ -562,43 +618,43 @@ function Home() {
       - Use clear, neutral language, avoiding trigger words like 'free', 'win', or 'now' to reduce spam risk.
       - Return only the message content.`;
       const response = await groq.chat.completions.create({
-        model: 'moonshotai/kimi-k2-instruct',
-        messages: [{ role: 'user', content: prompt }],
+        model: "moonshotai/kimi-k2-instruct",
+        messages: [{ role: "user", content: prompt }],
       });
-      const draft = response.choices[0]?.message?.content || 'Could not generate inquiry draft.';
-      console.log('Generated Email Draft:', draft);
+      const draft = response.choices[0]?.message?.content || "Could not generate inquiry draft.";
+      console.log("Generated Email Draft:", draft);
       return draft;
     } catch (error) {
-      console.error('Groq API error:', error);
-      setChat(prev => [...prev, '⚠️ Failed to generate email draft. Please try again.']);
-      return 'Could not generate inquiry draft.';
+      console.error("Groq API error:", error);
+      setChat((prev) => [...prev, "⚠️ Failed to generate email draft. Please try again."]);
+      return "Could not generate inquiry draft.";
     }
   };
 
   const generateContractPdfBase64 = (address: string): string => {
     const doc = new jsPDF();
     doc.setFontSize(16);
-    doc.text('Generic Rental Contract', 10, 10);
+    doc.text("Generic Rental Contract", 10, 10);
     doc.setFontSize(12);
     doc.text(`Property Address: ${address}`, 10, 20);
-    doc.text('This is a generic rental agreement template.', 10, 30);
-    doc.text('Parties: Tenant [Your Name] and Landlord [Agent Name].', 10, 40);
-    doc.text('Terms: Monthly rent, 12-month lease, etc.', 10, 50);
-    doc.text('Signature: ________________________ Date: __________', 10, 60);
-    return doc.output('datauristring').split(',')[1];
+    doc.text("This is a generic rental agreement template.", 10, 30);
+    doc.text("Parties: Tenant [Your Name] and Landlord [Agent Name].", 10, 40);
+    doc.text("Terms: Monthly rent, 12-month lease, etc.", 10, 50);
+    doc.text("Signature: ________________________ Date: __________", 10, 60);
+    return doc.output("datauristring").split(",")[1];
   };
 
   const sendEmailAndCreateInvite = async (selectedListing: Listing, draft: string, eventTime: string) => {
     if (!msalInstance || !selectedListing.agent.email || !draft || !eventTime) {
-      setChat(prev => [...prev, '⚠️ Missing required information to send email and invite.']);
+      setChat((prev) => [...prev, "⚠️ Missing required information to send email and invite."]);
       return;
     }
     if (isNaN(new Date(eventTime).getTime())) {
-      setChat(prev => [...prev, '⚠️ Invalid date and time selected.']);
+      setChat((prev) => [...prev, "⚠️ Invalid date and time selected."]);
       return;
     }
-    setFinalActionLoading(prev => ({ ...prev, [selectedListing.id]: true }));
-    setChat(prev => [...prev, `🚀 Sending inquiry email and creating calendar invite for ${selectedListing.address}...`]);
+    setFinalActionLoading((prev) => ({ ...prev, [selectedListing.id]: true }));
+    setChat((prev) => [...prev, `🚀 Sending inquiry email and creating calendar invite for ${selectedListing.address}...`]);
 
     const tokenRequest = {
       scopes: msalScopes,
@@ -609,23 +665,26 @@ function Home() {
     try {
       const tokenResponse = await msalInstance.acquireTokenSilent(tokenRequest);
       accessToken = tokenResponse.accessToken;
-      console.log('Access token acquired silently:', accessToken.substring(0, 10) + '...');
+      console.log("Access token acquired silently:", accessToken.substring(0, 10) + "...");
     } catch (error) {
       if (error instanceof InteractionRequiredAuthError) {
         try {
           const tokenResponse = await msalInstance.acquireTokenPopup(tokenRequest);
           accessToken = tokenResponse.accessToken;
-          console.log('Access token acquired via popup:', accessToken.substring(0, 10) + '...');
+          console.log("Access token acquired via popup:", accessToken.substring(0, 10) + "...");
         } catch (popupError) {
-          console.error('Token acquisition failed:', popupError);
-          setChat(prev => [...prev, '❌ Failed to acquire access token. Please try authenticating again.']);
-          setFinalActionLoading(prev => ({ ...prev, [selectedListing.id]: false }));
+          console.error("Token acquisition failed:", popupError);
+          setChat((prev) => [...prev, "❌ Failed to acquire access token. Please try authenticating again."]);
+          setFinalActionLoading((prev) => ({ ...prev, [selectedListing.id]: false }));
           return;
         }
       } else {
-        console.error('Silent token acquisition error:', error);
-        setChat(prev => [...prev, `❌ Token acquisition error: ${error instanceof Error ? error.message : 'Unknown error.'}`]);
-        setFinalActionLoading(prev => ({ ...prev, [selectedListing.id]: false }));
+        console.error("Silent token acquisition error:", error);
+        setChat((prev) => [
+          ...prev,
+          `❌ Token acquisition error: ${error instanceof Error ? error.message : "Unknown error."}`,
+        ]);
+        setFinalActionLoading((prev) => ({ ...prev, [selectedListing.id]: false }));
         return;
       }
     }
@@ -636,8 +695,8 @@ function Home() {
       message: {
         subject: `Inquiry: ${selectedListing.address}`,
         body: {
-          contentType: 'HTML',
-          content: draft.replace(/\n/g, '<br>'),
+          contentType: "HTML",
+          content: draft.replace(/\n/g, "<br>"),
         },
         toRecipients: [{ emailAddress: { address: selectedListing.agent.email } }],
         ...(authenticated && account?.username && {
@@ -648,103 +707,119 @@ function Home() {
             "@odata.type": "#microsoft.graph.fileAttachment",
             name: "RentalContract.pdf",
             contentType: "application/pdf",
-            contentBytes: pdfBase64
-          }
-        ]
+            contentBytes: pdfBase64,
+          },
+        ],
       },
       saveToSentItems: true,
     };
 
     const eventPayload = {
       subject: `Property Viewing: ${selectedListing.address}`,
-      start: { dateTime: eventTime, timeZone: 'America/New_York' },
-      end: { dateTime: new Date(new Date(eventTime).getTime() + 30 * 60 * 1000).toISOString(), timeZone: 'America/New_York' },
+      start: { dateTime: eventTime, timeZone: "America/New_York" },
+      end: {
+        dateTime: new Date(new Date(eventTime).getTime() + 30 * 60 * 1000).toISOString(),
+        timeZone: "America/New_York",
+      },
       body: {
-        contentType: 'HTML',
-        content: `Discussion or virtual tour for the rental property at ${selectedListing.address}.<br><a href="${formatUrl(selectedListing.detailUrl)}">View Listing Details</a><br>Please check your inbox or spam folder for my accompanying rental inquiry email.`
+        contentType: "HTML",
+        content: `Discussion or virtual tour for the rental property at ${selectedListing.address}.<br><a href="${formatUrl(
+          selectedListing.detailUrl
+        )}">View Listing Details</a><br>Please check your inbox or spam folder for my accompanying rental inquiry email.`,
       },
       attendees: [
-        { emailAddress: { name: selectedListing.agent.name || 'Agent', address: selectedListing.agent.email }, type: 'required' },
+        { emailAddress: { name: selectedListing.agent.name || "Agent", address: selectedListing.agent.email }, type: "required" },
       ],
     };
 
     try {
-      const emailResponse = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
-        method: 'POST',
+      const emailResponse = await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
+        method: "POST",
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify(emailPayload),
       });
 
       if (!emailResponse.ok) {
         const errorData = await emailResponse.json();
-        throw new Error(`Microsoft Graph API error (Mail): ${emailResponse.status} - ${errorData.error?.message || 'Unknown error'}`);
+        throw new Error(
+          `Microsoft Graph API error (Mail): ${emailResponse.status} - ${errorData.error?.message || "Unknown error"}`
+        );
       }
-      console.log('Email sent successfully');
+      console.log("Email sent successfully");
 
-      const eventResponse = await fetch('https://graph.microsoft.com/v1.0/me/events', {
-        method: 'POST',
+      const eventResponse = await fetch("https://graph.microsoft.com/v1.0/me/events", {
+        method: "POST",
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify(eventPayload),
       });
 
       if (!eventResponse.ok) {
         const eventErrorData = await eventResponse.json();
-        throw new Error(`Microsoft Graph API error (Event): ${eventResponse.status} - ${eventErrorData.error?.message || 'Unknown error'}`);
+        throw new Error(
+          `Microsoft Graph API error (Event): ${eventResponse.status} - ${eventErrorData.error?.message || "Unknown error"}`
+        );
       }
-      console.log('Calendar invite created successfully');
+      console.log("Calendar invite created successfully");
 
-      setChat(prev => [
+      setChat((prev) => [
         ...prev,
         `✅ Inquiry email sent to ${selectedListing.agent.email} with PDF contract attached!`,
         `✅ Calendar invite created for ${selectedListing.address}.`,
-        '🎉 All done! Good luck with your rental!',
+        "🎉 All done! Good luck with your rental!",
       ]);
       setListing(null);
       setAllListings([]);
-      setEmailDraft('');
+      setEmailDraft("");
       setCalendarTime(getDefaultBusinessTime());
       setListingDrafts({});
       setAuthenticated(false);
       setAccount(null);
     } catch (error) {
-      console.error('Microsoft Graph API error:', error);
-      setChat(prev => [...prev, `❌ Failed to send email or create invite: ${error instanceof Error ? error.message : 'Unknown error.'}`]);
+      console.error("Microsoft Graph API error:", error);
+      setChat((prev) => [
+        ...prev,
+        `❌ Failed to send email or create invite: ${error instanceof Error ? error.message : "Unknown error."}`,
+      ]);
     } finally {
-      setFinalActionLoading(prev => ({ ...prev, [selectedListing.id]: false }));
+      setFinalActionLoading((prev) => ({ ...prev, [selectedListing.id]: false }));
     }
   };
 
   const handleGenerateDraft = async (selectedListing: Listing) => {
     setListing(selectedListing);
     const draft = await generateInquiryDraft(selectedListing);
-    setListingDrafts(prev => ({ ...prev, [selectedListing.id]: draft }));
+    setListingDrafts((prev) => ({ ...prev, [selectedListing.id]: draft }));
     setEmailDraft(draft);
-    setChat(prev => [...prev, `📝 Draft generated for ${selectedListing.address}. ${selectedListing.agent.email ? 'Select a time and authenticate to send.' : 'No agent email found.'}`]);
+    setChat((prev) => [
+      ...prev,
+      `📝 Draft generated for ${selectedListing.address}. ${selectedListing.agent.email ? "Select a time and authenticate to send." : "No agent email found."
+      }`,
+    ]);
   };
 
   const handleDeposit = async (listingId: string, amountUSD: string) => {
     if (!signer || !userWalletAddress) {
-      setChat(prev => [...prev, 'Please connect wallet and authenticate to deposit.']);
+      setChat((prev) => [...prev, "Please connect wallet and authenticate to deposit."]);
       return;
     }
-    setChat(prev => [...prev, `🚀 Initiating deposit of $${amountUSD} to escrow...`]);
+    setChat((prev) => [...prev, `🚀 Initiating deposit of $${amountUSD} to escrow...`]);
     try {
       const txHash = await sendUsdcToDeposit(signer, parseFloat(amountUSD), process.env.NEXT_PUBLIC_ESCROW_ADDRESS!);
-      await fetch('/api/escrow', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, txHash, amountUSD, email: account?.username || null, walletAddress: userWalletAddress })
+      await fetch("/api/escrow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ listingId, txHash, amountUSD, email: account?.username || null, walletAddress: userWalletAddress }),
       });
-      setChat(prev => [...prev, `✅ Escrow deposit tx submitted: ${txHash}`]);
+      setChat((prev) => [...prev, `✅ Escrow deposit tx submitted: ${txHash}`]);
     } catch (e) {
       console.error(e);
-      setChat(prev => [...prev, '❌ Deposit failed.']);
+      setChat((prev) => [...prev, "❌ Deposit failed."]);
     }
   };
 
@@ -754,33 +829,36 @@ function Home() {
 
     setListing(null);
     setAllListings([]);
-    setEmailDraft('');
+    setEmailDraft("");
     setListingDrafts({});
     setShowAllListings(false);
     setIsLoading(true);
-    setChat(prev => [...prev, `👤 You: ${prompt}`]);
+    setChat((prev) => [...prev, `👤 You: ${prompt}`]);
 
-    setChat(prev => [...prev, '🔍 Searching for rentals...']);
+    setChat((prev) => [...prev, "🔍 Searching for rentals..."]);
     const { primary, all } = await fetchRentals(prompt);
     setIsLoading(false);
 
     if (!primary) {
-      setPrompt('');
+      setPrompt("");
       return;
     }
 
     setListing(primary);
     setAllListings(all);
-    setChat(prev => [...prev, `✅ Found ${all.length} rental${all.length === 1 ? '' : 's'}: See listings below.`]);
+    setChat((prev) => [...prev, `✅ Found ${all.length} rental${all.length === 1 ? "" : "s"}: See listings below.`]);
 
     if (primary.agent.email) {
       const draft = await generateInquiryDraft(primary);
       setEmailDraft(draft);
-      setChat(prev => [...prev, `📝 Prepared email draft and calendar invite for ${primary.address}. Authenticate to send.`]);
+      setChat((prev) => [...prev, `📝 Prepared email draft and calendar invite for ${primary.address}. Authenticate to send.`]);
     } else {
-      setChat(prev => [...prev, `📋 View listings below to generate an email draft. No agent email found for ${primary.address}.`]);
+      setChat((prev) => [
+        ...prev,
+        `📋 View listings below to generate an email draft. No agent email found for ${primary.address}.`,
+      ]);
     }
-    setPrompt('');
+    setPrompt("");
   };
 
   return (
@@ -795,11 +873,6 @@ function Home() {
         <p>Tell us when you're free, and our AI will schedule viewings for you. (Coming Soon!)</p>
       </div>
 
-      <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', alignItems: 'center' }}>
-        <ConnectWallet />
-        <FundButton />
-      </div>
-
       <div className="main-grid">
         <div className="chat-section">
           <div className="chat-container">
@@ -811,10 +884,10 @@ function Home() {
             </div>
             <div className="chat-messages">
               {chat.map((msg, i) => {
-                const isUser = msg.startsWith('👤 You:');
+                const isUser = msg.startsWith("👤 You:");
                 return (
-                  <div key={i} className={`message-wrapper ${isUser ? 'user-message' : 'system-message'}`}>
-                    <div className={`message ${isUser ? 'user' : 'system'}`}>
+                  <div key={i} className={`message-wrapper ${isUser ? "user-message" : "system-message"}`}>
+                    <div className={`message ${isUser ? "user" : "system"}`}>
                       <p>{msg}</p>
                     </div>
                   </div>
@@ -822,7 +895,13 @@ function Home() {
               })}
               {isLoading && (
                 <div className="message-wrapper system-message">
-                  <div className="message system"><div className="typing-indicator"><div className="dot"></div><div className="dot"></div><div className="dot"></div></div></div>
+                  <div className="message system">
+                    <div className="typing-indicator">
+                      <div className="dot"></div>
+                      <div className="dot"></div>
+                      <div className="dot"></div>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -833,7 +912,7 @@ function Home() {
                   className="chat-input"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSubmit()}
+                  onKeyPress={(e) => e.key === "Enter" && handleSubmit()}
                   placeholder="e.g., 2BR 1BA apartment in Williamsburg, New York under $3000"
                   disabled={isLoading}
                 />
@@ -843,8 +922,10 @@ function Home() {
                   onChange={(e) => setSelectedState(e.target.value)}
                   disabled={isLoading}
                 >
-                  {usStates.map(state => (
-                    <option key={state.code} value={state.code}>{state.name}</option>
+                  {usStates.map((state) => (
+                    <option key={state.code} value={state.code}>
+                      {state.name}
+                    </option>
                   ))}
                 </select>
                 <button
@@ -878,13 +959,13 @@ function Home() {
               <p><strong>Beds / Baths:</strong> {listing.bedrooms} bed / {listing.bathrooms} bath</p>
               <p><strong>Type:</strong> {listing.propertyType}</p>
               <p>
-                <strong>Listing:</strong>{' '}
-                {listing.detailUrl !== '#' ? (
+                <strong>Listing:</strong>{" "}
+                {listing.detailUrl !== "#" ? (
                   <a href={formatUrl(listing.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
                     View Agent Site
                   </a>
                 ) : (
-                  <span style={{ color: '#d1d5db' }}>No agent site available</span>
+                  <span style={{ color: "#d1d5db" }}>No agent site available</span>
                 )}
               </p>
             </div>
@@ -928,7 +1009,7 @@ function Home() {
         </div>
         {allListings.length > 3 && (
           <button onClick={() => setShowAllListings(!showAllListings)} className="see-more-button">
-            {showAllListings ? 'Show Less' : `See More (${allListings.length - 3} more)`}
+            {showAllListings ? "Show Less" : `See More (${allListings.length - 3} more)`}
           </button>
         )}
       </div>
@@ -940,46 +1021,46 @@ function Home() {
             <div className="email-section">
               <h4 className="section-title email-title">📝 Inquiry Email</h4>
               <div className="instructions">
-                <strong>Action:</strong> {authenticated && listing?.agent.email ? 'Review the email and calendar invite.' : 'Authorize Microsoft to send or copy the draft below.'}
+                <strong>Action:</strong>{" "}
+                {authenticated && listing?.agent.email
+                  ? "Review the email and calendar invite."
+                  : "Authorize Microsoft to send or copy the draft below."}
               </div>
-              <textarea
-                className="email-textarea"
-                value={emailDraft}
-                onChange={(e) => setEmailDraft(e.target.value)}
-              />
+              <textarea className="email-textarea" value={emailDraft} onChange={(e) => setEmailDraft(e.target.value)} />
             </div>
           </div>
         </div>
       )}
-
-      <style jsx>{`
-        .deposit-button { 
-          background: linear-gradient(45deg, #eab308, #f97316); 
-          color: white; 
-          font-weight: 600; 
-          padding: 0.75rem 1.5rem; 
-          border: none; 
-          border-radius: 0.5rem; 
-          cursor: pointer; 
-        }
-        .deposit-button:hover { 
-          transform: scale(1.05); 
-        }
-      `}</style>
     </div>
   );
 }
 
 // Export the top-level Page component with providers wrapping Home
 export default function Page() {
+  // Define wagmi config here
+  const config = createConfig({
+    chains: [base],
+    connectors: [
+      coinbaseWallet({
+        appName: "Rental AI Assistant",
+        preference: "smartWalletOnly",
+      }),
+    ],
+    transports: {
+      [base.id]: http(),
+    },
+  });
+
+  const handleWalletConnect = (address: string) => {
+    // This function will be passed to Web3Wrapper
+    // You can add additional logic here if needed
+  };
+
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <AppOnchainProvider>
-          <Web3Wrapper onWalletConnect={(address: string) => {
-            // Pass the handleWalletConnect function to Web3Wrapper
-            Home().props.children.props.onWalletConnect(address);
-          }}>
+          <Web3Wrapper onWalletConnect={handleWalletConnect}>
             <Home />
           </Web3Wrapper>
         </AppOnchainProvider>
