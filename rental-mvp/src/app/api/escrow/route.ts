@@ -1,50 +1,36 @@
-// api/escrow/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from "@supabase/supabase-js";
+import { NextResponse } from "next/server";
 
 const supabase = createClient(
     process.env.SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_KEY!
 );
 
-export async function POST(req: NextRequest) {
+export async function POST(request: Request) {
     try {
-        const { listingId, txHash, amountUSD, email, walletAddress } = await req.json();
-        if (!listingId || !txHash || !amountUSD || !email || !walletAddress) {
-            return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+        const { listingId, txHash, amountUSD, email, walletAddress } = await request.json();
+
+        if (!listingId || !txHash || !amountUSD || !walletAddress) {
+            return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
         }
 
-        // Upsert user
-        const { error: userError } = await supabase
-            .from('users')
-            .upsert(
-                { email, wallet_address: walletAddress, created_at: new Date().toISOString() },
-                { onConflict: 'email' }
-            );
-        if (userError) throw userError;
+        const { error } = await supabase.from("escrow_transactions").insert({
+            listing_id: listingId,
+            tx_hash: txHash,
+            amount_usd: parseFloat(amountUSD),
+            user_email: email || null,
+            wallet_address: walletAddress,
+            created_at: new Date().toISOString(),
+        });
 
-        // Insert deposit
-        const { data, error } = await supabase
-            .from('deposits')
-            .insert([
-                {
-                    listing_id: listingId,
-                    amount: amountUSD,
-                    user_email: email,
-                    wallet_address: walletAddress,
-                    tx_hash: txHash,
-                    escrow_address: process.env.NEXT_PUBLIC_ESCROW_ADDRESS!,
-                    created_at: new Date().toISOString(),
-                    status: 'pending',
-                },
-            ])
-            .select();
+        if (error) {
+            console.error("Supabase error:", error);
+            return NextResponse.json({ error: "Failed to log transaction" }, { status: 500 });
+        }
 
-        if (error) throw error;
-
-        return NextResponse.json({ success: true, data });
+        return NextResponse.json({ success: true, txHash });
     } catch (error) {
-        console.error('Error recording deposit:', error);
-        return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
+        console.error("Escrow API error:", error);
+        return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
 }

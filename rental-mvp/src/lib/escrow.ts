@@ -11,12 +11,16 @@ export async function sendUsdcToDeposit(signer: ethers.Signer, amount: number, e
     try {
         const usdcContract = new ethers.Contract(USDC_ADDRESS, usdcAbi, signer);
         const decimals = await usdcContract.decimals();
+        const balance = await usdcContract.balanceOf(await signer.getAddress());
         const amountWei = ethers.parseUnits(amount.toString(), decimals);
+        if (balance.lt(amountWei)) {
+            throw new Error("Insufficient USDC balance");
+        }
         const tx = await usdcContract.transfer(escrowAddress, amountWei);
         const receipt = await tx.wait();
-        return receipt.hash; // Return txHash
+        return receipt.hash;
     } catch (error) {
         console.error('Error sending USDC:', error);
-        throw new Error(String(error));
+        throw new Error(error instanceof Error ? error.message : String(error));
     }
 }

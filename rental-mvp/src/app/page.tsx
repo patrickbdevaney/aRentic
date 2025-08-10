@@ -1,17 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { PublicClientApplication, InteractionRequiredAuthError } from "@azure/msal-browser";
+import { PublicClientApplication, InteractionRequiredAuthError, AccountInfo } from "@azure/msal-browser";
 import { Groq } from "groq-sdk";
-import { useAccount, useWalletClient } from "wagmi";
+import { useAccount, useWalletClient, useConnect } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ethers, BrowserProvider } from "ethers";
 import { AppOnchainProvider } from "@/components/OnchainProvider";
 import { sendUsdcToDeposit } from "@/lib/escrow";
 import jsPDF from "jspdf";
-import { createConfig, http, WagmiProvider } from "wagmi";
-import { base } from "wagmi/chains";
-import { coinbaseWallet } from "wagmi/connectors";
 import "./styles.css";
 
 // Force dynamic rendering for wallet connection
@@ -147,31 +144,29 @@ const testListing: Listing = {
 const getDefaultBusinessTime = (): string => {
   const now = new Date();
   let targetDate = new Date(now);
-  targetDate.setDate(now.getDate() + 3); // 3 days from now
+  targetDate.setDate(now.getDate() + 3);
   const day = targetDate.getDay();
-  if (day === 0) targetDate.setDate(targetDate.getDate() + 1); // Skip Sunday
-  else if (day === 6) targetDate.setDate(targetDate.getDate() + 2); // Skip Saturday
-  targetDate.setHours(14, 0, 0, 0); // Set to 2:00 PM
+  if (day === 0) targetDate.setDate(targetDate.getDate() + 1);
+  else if (day === 6) targetDate.setDate(targetDate.getDate() + 2);
+  targetDate.setHours(14, 0, 0, 0);
   return targetDate.toISOString().split(".")[0];
 };
 
 // Function to generate Google Street View URL
 const getStreetViewUrl = (address: string) => {
   const encodedAddress = encodeURIComponent(address);
-  const url = `/api/streetview?address=${encodedAddress}`;
-  console.log("Street View API Route URL:", url);
-  return url;
+  return `/api/streetview?address=${encodedAddress}`;
 };
 
 // Function to generate Coinbase Onramp URL
-const getOnrampUrl = (address: string, amount: number, network: string = "base") => {
+const getOnrampUrl = (address: string, amount: number) => {
   const params = new URLSearchParams({
     appId: process.env.NEXT_PUBLIC_CDP_PROJECT_ID || "",
     destination: address,
     presetFiatAmount: amount.toString(),
     fiatCurrency: "USD",
     assets: "USDC",
-    network,
+    network: "base",
   });
   return `https://pay.coinbase.com/buy?${params.toString()}`;
 };
@@ -183,7 +178,7 @@ const useEthersSigner = () => {
 
   useEffect(() => {
     if (walletClient) {
-      const provider = new BrowserProvider(walletClient.transport, base);
+      const provider = new BrowserProvider(walletClient.transport);
       provider.getSigner().then(setSigner).catch((error) => {
         console.error("Failed to get signer:", error);
         setSigner(null);
@@ -197,27 +192,26 @@ const useEthersSigner = () => {
 };
 
 // Web3-specific component to isolate useAccount
-function Web3Wrapper({ children, onWalletConnect }: { children: React.ReactNode; onWalletConnect: (address: string) => void }) {
+function Web3Wrapper({ children }: { children: React.ReactNode }) {
   const { isConnected, address } = useAccount();
+  const { connect, connectors } = useConnect();
 
-  useEffect(() => {
-    if (isConnected && address) {
-      onWalletConnect(address);
+  const handleConnect = () => {
+    const coinbaseConnector = connectors.find(c => c.id === 'coinbaseWallet');
+    if (coinbaseConnector) {
+      connect({ connector: coinbaseConnector });
+    } else {
+      console.error("Coinbase Wallet connector not found");
     }
-  }, [isConnected, address, onWalletConnect]);
+  };
 
   return (
     <div>
-      {isConnected ? (
+      {isConnected && address ? (
         <p style={{ color: "#22c55e", textAlign: "center" }}>✅ Wallet Connected: {address}</p>
       ) : (
         <div style={{ display: "flex", justifyContent: "center", margin: "1rem 0" }}>
-          <button
-            onClick={() => {
-              // Trigger wallet connection via OnchainKit modal
-            }}
-            className="connect-wallet-button"
-          >
+          <button onClick={handleConnect} className="connect-wallet-button">
             Connect Wallet
           </button>
         </div>
@@ -265,9 +259,7 @@ function ListingCard({
         src={imageUrl}
         alt={`Street View of ${list.address}`}
         style={{ width: "100%", height: "200px", objectFit: "cover", borderRadius: "0.5rem" }}
-        onError={(e) => {
-          e.currentTarget.src = "/fallback-image.jpg";
-        }}
+        onError={(e) => { e.currentTarget.src = "/fallback-image.jpg"; }}
       />
       <p><strong>Address:</strong> {list.address}</p>
       <p><strong>Price:</strong> ${list.price.toLocaleString()}/month</p>
@@ -290,9 +282,9 @@ function ListingCard({
       {userWalletAddress && (
         <button
           className="onramp-button"
-          onClick={() => window.open(getOnrampUrl(userWalletAddress, list.price * 0.15, "base"), "_blank")}
+          onClick={() => window.open(getOnrampUrl(userWalletAddress, 0.25), "_blank")}
         >
-          💸 Fund Wallet
+          💸 Fund Wallet ($0.25)
         </button>
       )}
       {listingDrafts[list.id] && (
@@ -300,9 +292,7 @@ function ListingCard({
           <textarea className="draft-textarea" value={listingDrafts[list.id]} readOnly />
           <button
             className="copy-draft-button"
-            onClick={() => {
-              navigator.clipboard.writeText(listingDrafts[list.id]);
-            }}
+            onClick={() => navigator.clipboard.writeText(listingDrafts[list.id])}
           >
             📋 Copy Draft
           </button>
@@ -328,10 +318,11 @@ function ListingCard({
                 </button>
               )}
               <button
-                onClick={() => handleDeposit(list.id, (list.price * 0.15).toFixed(2))}
+                onClick={() => handleDeposit(list.id, "0.25")}
                 className="deposit-button"
+                disabled={!userWalletAddress}
               >
-                💰 Deposit Escrow (${(list.price * 0.15).toFixed(2)})
+                💰 Deposit Escrow ($0.25)
               </button>
             </>
           )}
@@ -353,8 +344,8 @@ function Home() {
   const [chat, setChat] = useState<string[]>([
     "Welcome to the Rental AI Assistant! 🏠",
     "Find your perfect rental by entering a search prompt below.",
-    "I’ll show you listings, help draft emails, and send calendar invites!",
-    "Use the test listing below to try sending an email and calendar invite.",
+    "Connect your Coinbase Wallet to deposit USDC for escrow.",
+    "Use the test listing below to try the full workflow.",
   ]);
   const [emailDraft, setEmailDraft] = useState<string>("");
   const [calendarTime, setCalendarTime] = useState<string>(getDefaultBusinessTime());
@@ -365,30 +356,9 @@ function Home() {
   const [listingDrafts, setListingDrafts] = useState<{ [key: string]: string }>({});
   const [authenticated, setAuthenticated] = useState<boolean>(false);
   const [finalActionLoading, setFinalActionLoading] = useState<{ [key: string]: boolean }>({});
-  const [account, setAccount] = useState<any>(null);
-  const [userWalletAddress, setUserWalletAddress] = useState<string | null>(null);
-
+  const [account, setAccount] = useState<AccountInfo | null>(null);
+  const { address } = useAccount();
   const signer = useEthersSigner();
-
-  // Fetch wallet address after authentication
-  useEffect(() => {
-    if (authenticated && account?.username) {
-      const fetchWalletAddress = async () => {
-        try {
-          const response = await fetch(`/api/user-wallet?email=${encodeURIComponent(account.username)}`);
-          const data = await response.json();
-          if (data.walletAddress) {
-            setUserWalletAddress(data.walletAddress);
-            setChat((prev) => [...prev, `✅ Retrieved wallet address: ${data.walletAddress}`]);
-          }
-        } catch (error) {
-          console.error("Error fetching wallet address:", error);
-          setChat((prev) => [...prev, "⚠️ Could not retrieve wallet address. Connect wallet to proceed."]);
-        }
-      };
-      fetchWalletAddress();
-    }
-  }, [authenticated, account]);
 
   // Initialize MSAL
   useEffect(() => {
@@ -406,7 +376,7 @@ function Home() {
             const draft = await generateInquiryDraft(listing);
             setListingDrafts((prev) => ({ ...prev, [listing.id]: draft }));
             setEmailDraft(draft);
-            setChat((prev) => [...prev, `📝 Email draft updated with your email address for ${listing.address}.`]);
+            setChat((prev) => [...prev, `📝 Email draft updated for ${listing.address}.`]);
           }
         }
       } catch (e) {
@@ -441,34 +411,11 @@ function Home() {
         const draft = await generateInquiryDraft(listing);
         setListingDrafts((prev) => ({ ...prev, [listing.id]: draft }));
         setEmailDraft(draft);
-        setChat((prev) => [...prev, `📝 Email draft updated with your email address for ${listing.address}.`]);
+        setChat((prev) => [...prev, `📝 Email draft updated for ${listing.address}.`]);
       }
     } catch (error) {
       console.error("Login failed:", error);
       setChat((prev) => [...prev, "❌ Authentication failed. Please try again to send."]);
-    }
-  };
-
-  const handleWalletConnect = async (address: string) => {
-    if (account?.username) {
-      try {
-        const response = await fetch("/api/user-wallet", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: account.username, walletAddress: address }),
-        });
-        if (response.ok) {
-          setUserWalletAddress(address);
-          setChat((prev) => [...prev, `✅ Wallet ${address} linked to ${account.username}`]);
-        } else {
-          setChat((prev) => [...prev, "⚠️ Failed to link wallet address."]);
-        }
-      } catch (error) {
-        console.error("Error linking wallet:", error);
-        setChat((prev) => [...prev, "⚠️ Error linking wallet address."]);
-      }
-    } else {
-      setChat((prev) => [...prev, "⚠️ Please authenticate with Microsoft before connecting wallet."]);
     }
   };
 
@@ -481,20 +428,13 @@ function Home() {
         messages: [
           {
             role: "system",
-            content: `You are an expert rental search query parser. Your task is to extract search parameters from a user's prompt. Return a single, clean JSON object with the following fields: city, state, neighborhood, bedrooms, bathrooms, minPrice, maxPrice, homeType.
-          - If a neighborhood is mentioned (e.g., 'Gramercy', 'Williamsburg'), extract it.
-          - Map common city aliases (e.g., 'NYC' -> city: 'New York', state: 'NY').
-          - Be precise. Do not add fields that are not in the prompt.`,
+            content: `You are an expert rental search query parser. Extract search parameters from the prompt. Return a JSON object with: city, state, neighborhood, bedrooms, bathrooms, minPrice, maxPrice, homeType. Map aliases (e.g., 'NYC' -> city: 'New York', state: 'NY'). Be precise.`,
           },
-          {
-            role: "user",
-            content: `Parse this prompt: "${prompt}"`,
-          },
+          { role: "user", content: `Parse this prompt: "${prompt}"` },
         ],
         response_format: { type: "json_object" },
       });
-      let content = response.choices[0]?.message?.content || "{}";
-      content = content.replace(/```json\s*|\s*```/g, "").trim();
+      const content = response.choices[0]?.message?.content?.replace(/```json\s*|\s*```/g, "").trim() || "{}";
       const parsed = JSON.parse(content);
       return {
         city: parsed.city || "New York",
@@ -516,7 +456,7 @@ function Home() {
   const parsePromptFallback = (prompt: string): ParsedPrompt => {
     const params: ParsedPrompt = {};
     const lowerPrompt = prompt.toLowerCase();
-    let cityMatch = lowerPrompt.match(/([a-zA-Z\s]+),\s*([A-Z]{2})/);
+    const cityMatch = lowerPrompt.match(/([a-zA-Z\s]+),\s*([A-Z]{2})/);
     if (cityMatch) {
       params.city = cityMatch[1].trim();
       params.state = cityMatch[2];
@@ -545,13 +485,9 @@ function Home() {
       params.bathrooms = numberWords[bathroomsMatch[1]] || bathroomsMatch[1];
     }
     const underMatch = lowerPrompt.match(/under\s*\$?(\d+)/i);
-    if (underMatch) {
-      params.maxPrice = underMatch[1];
-    }
+    if (underMatch) params.maxPrice = underMatch[1];
     const overMatch = lowerPrompt.match(/over\s*\$?(\d+)/i);
-    if (overMatch) {
-      params.minPrice = overMatch[1];
-    }
+    if (overMatch) params.minPrice = overMatch[1];
     const betweenMatch = lowerPrompt.match(/between\s*\$?(\d+)\s*and\s*\$?(\d+)/i);
     if (betweenMatch) {
       params.minPrice = betweenMatch[1];
@@ -577,17 +513,12 @@ function Home() {
         ...(params.maxPrice && { maxPrice: params.maxPrice }),
         home_type: homeType,
       });
-      const url = `/api/rentcast?${searchParams.toString()}`;
-      console.log("RentCast API Request URL:", url);
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`RentCast Proxy error: ${response.status}`);
-      }
+      const response = await fetch(`/api/rentcast?${searchParams.toString()}`);
+      if (!response.ok) throw new Error(`RentCast Proxy error: ${response.status}`);
       const data = await response.json();
-      if (data && data.props && data.props.length > 0) {
+      if (data?.props?.length > 0) {
         const allListings = data.props;
         const primaryListing = allListings.find((prop: any) => prop.address && prop.price && prop.agent.email) || allListings[0];
-        console.log("RentCast Listings Found:", allListings);
         return { primary: primaryListing, all: allListings };
       }
       setChat((prev) => [...prev, "❌ No properties found for your criteria. Try a different search."]);
@@ -619,7 +550,7 @@ function Home() {
       - Property Address: ${listing.address}
       - Express interest in the property in a neutral, professional tone, avoiding promotional phrases, exclamation marks, or urgent language.
       - Inquire about availability, move-in date, and lease terms, keeping the request flexible.
-      - Mention a tentative calendar invite sent for a specific time (${formattedTime} EDT) to discuss the property or schedule a virtual tour, noting flexibility to reschedule if needed.
+      - Mention a tentative calendar invite sent for ${formattedTime} EDT to discuss the property or schedule a virtual tour, noting flexibility to reschedule if needed.
       - Request options for an in-person or virtual viewing.
       - Ask about the next steps in the rental process.
       - Append the following lease contract text at the end of the email after two new lines: "${contractText}"
@@ -631,9 +562,7 @@ function Home() {
         model: "moonshotai/kimi-k2-instruct",
         messages: [{ role: "user", content: prompt }],
       });
-      const draft = response.choices[0]?.message?.content || "Could not generate inquiry draft.";
-      console.log("Generated Email Draft:", draft);
-      return draft;
+      return response.choices[0]?.message?.content || "Could not generate inquiry draft.";
     } catch (error) {
       console.error("Groq API error:", error);
       setChat((prev) => [...prev, "⚠️ Failed to generate email draft. Please try again."]);
@@ -655,33 +584,22 @@ function Home() {
   };
 
   const sendEmailAndCreateInvite = async (selectedListing: Listing, draft: string, eventTime: string) => {
-    if (!msalInstance || !selectedListing.agent.email || !draft || !eventTime) {
-      setChat((prev) => [...prev, "⚠️ Missing required information to send email and invite."]);
-      return;
-    }
-    if (isNaN(new Date(eventTime).getTime())) {
-      setChat((prev) => [...prev, "⚠️ Invalid date and time selected."]);
+    if (!msalInstance || !selectedListing.agent.email || !draft || !eventTime || isNaN(new Date(eventTime).getTime())) {
+      setChat((prev) => [...prev, "⚠️ Missing or invalid information to send email and invite."]);
       return;
     }
     setFinalActionLoading((prev) => ({ ...prev, [selectedListing.id]: true }));
     setChat((prev) => [...prev, `🚀 Sending inquiry email and creating calendar invite for ${selectedListing.address}...`]);
 
-    const tokenRequest = {
-      scopes: msalScopes,
-      account: account,
-    };
-
     let accessToken;
     try {
-      const tokenResponse = await msalInstance.acquireTokenSilent(tokenRequest);
+      const tokenResponse = await msalInstance.acquireTokenSilent({ scopes: msalScopes, account: account! });
       accessToken = tokenResponse.accessToken;
-      console.log("Access token acquired silently:", accessToken.substring(0, 10) + "...");
     } catch (error) {
       if (error instanceof InteractionRequiredAuthError) {
         try {
-          const tokenResponse = await msalInstance.acquireTokenPopup(tokenRequest);
+          const tokenResponse = await msalInstance.acquireTokenPopup({ scopes: msalScopes });
           accessToken = tokenResponse.accessToken;
-          console.log("Access token acquired via popup:", accessToken.substring(0, 10) + "...");
         } catch (popupError) {
           console.error("Token acquisition failed:", popupError);
           setChat((prev) => [...prev, "❌ Failed to acquire access token. Please try authenticating again."]);
@@ -690,28 +608,19 @@ function Home() {
         }
       } else {
         console.error("Silent token acquisition error:", error);
-        setChat((prev) => [
-          ...prev,
-          `❌ Token acquisition error: ${error instanceof Error ? error.message : "Unknown error."}`,
-        ]);
+        setChat((prev) => [...prev, `❌ Token acquisition error: ${error instanceof Error ? error.message : "Unknown error"}`]);
         setFinalActionLoading((prev) => ({ ...prev, [selectedListing.id]: false }));
         return;
       }
     }
 
     const pdfBase64 = generateContractPdfBase64(selectedListing.address);
-
     const emailPayload = {
       message: {
         subject: `Inquiry: ${selectedListing.address}`,
-        body: {
-          contentType: "HTML",
-          content: draft.replace(/\n/g, "<br>"),
-        },
+        body: { contentType: "HTML", content: draft.replace(/\n/g, "<br>") },
         toRecipients: [{ emailAddress: { address: selectedListing.agent.email } }],
-        ...(authenticated && account?.username && {
-          from: { emailAddress: { address: account.username } },
-        }),
+        ...(authenticated && account?.username && { from: { emailAddress: { address: account.username } } }),
         attachments: [
           {
             "@odata.type": "#microsoft.graph.fileAttachment",
@@ -727,55 +636,34 @@ function Home() {
     const eventPayload = {
       subject: `Property Viewing: ${selectedListing.address}`,
       start: { dateTime: eventTime, timeZone: "America/New_York" },
-      end: {
-        dateTime: new Date(new Date(eventTime).getTime() + 30 * 60 * 1000).toISOString(),
-        timeZone: "America/New_York",
-      },
+      end: { dateTime: new Date(new Date(eventTime).getTime() + 30 * 60 * 1000).toISOString(), timeZone: "America/New_York" },
       body: {
         contentType: "HTML",
-        content: `Discussion or virtual tour for the rental property at ${selectedListing.address}.<br><a href="${formatUrl(
-          selectedListing.detailUrl
-        )}">View Listing Details</a><br>Please check your inbox or spam folder for my accompanying rental inquiry email.`,
+        content: `Discussion or virtual tour for the rental property at ${selectedListing.address}.<br><a href="${formatUrl(selectedListing.detailUrl)}">View Listing Details</a><br>Please check your inbox or spam folder for my accompanying rental inquiry email.`,
       },
-      attendees: [
-        { emailAddress: { name: selectedListing.agent.name || "Agent", address: selectedListing.agent.email }, type: "required" },
-      ],
+      attendees: [{ emailAddress: { name: selectedListing.agent.name || "Agent", address: selectedListing.agent.email }, type: "required" }],
     };
 
     try {
       const emailResponse = await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify(emailPayload),
       });
-
       if (!emailResponse.ok) {
         const errorData = await emailResponse.json();
-        throw new Error(
-          `Microsoft Graph API error (Mail): ${emailResponse.status} - ${errorData.error?.message || "Unknown error"}`
-        );
+        throw new Error(`Microsoft Graph API error (Mail): ${errorData.error?.message || "Unknown error"}`);
       }
-      console.log("Email sent successfully");
 
       const eventResponse = await fetch("https://graph.microsoft.com/v1.0/me/events", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify(eventPayload),
       });
-
       if (!eventResponse.ok) {
         const eventErrorData = await eventResponse.json();
-        throw new Error(
-          `Microsoft Graph API error (Event): ${eventResponse.status} - ${eventErrorData.error?.message || "Unknown error"}`
-        );
+        throw new Error(`Microsoft Graph API error (Event): ${eventErrorData.error?.message || "Unknown error"}`);
       }
-      console.log("Calendar invite created successfully");
 
       setChat((prev) => [
         ...prev,
@@ -792,10 +680,7 @@ function Home() {
       setAccount(null);
     } catch (error) {
       console.error("Microsoft Graph API error:", error);
-      setChat((prev) => [
-        ...prev,
-        `❌ Failed to send email or create invite: ${error instanceof Error ? error.message : "Unknown error."}`,
-      ]);
+      setChat((prev) => [...prev, `❌ Failed to send email or create invite: ${error instanceof Error ? error.message : "Unknown error"}`]);
     } finally {
       setFinalActionLoading((prev) => ({ ...prev, [selectedListing.id]: false }));
     }
@@ -813,22 +698,22 @@ function Home() {
   };
 
   const handleDeposit = async (listingId: string, amountUSD: string) => {
-    if (!signer || !userWalletAddress) {
-      setChat((prev) => [...prev, "Please connect wallet and authenticate to deposit."]);
+    if (!signer || !address) {
+      setChat((prev) => [...prev, "⚠️ Please connect your Coinbase Wallet to deposit."]);
       return;
     }
-    setChat((prev) => [...prev, `🚀 Initiating deposit of $${amountUSD} to escrow...`]);
+    setChat((prev) => [...prev, `🚀 Initiating deposit of $${amountUSD} USDC to escrow...`]);
     try {
       const txHash = await sendUsdcToDeposit(signer, parseFloat(amountUSD), process.env.NEXT_PUBLIC_ESCROW_ADDRESS!);
       await fetch("/api/escrow", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ listingId, txHash, amountUSD, email: account?.username || null, walletAddress: userWalletAddress }),
+        body: JSON.stringify({ listingId, txHash, amountUSD, email: account?.username || null, walletAddress: address }),
       });
-      setChat((prev) => [...prev, `✅ Escrow deposit tx submitted: ${txHash}`]);
+      setChat((prev) => [...prev, `✅ Escrow deposit of $${amountUSD} USDC submitted: ${txHash}`]);
     } catch (e) {
-      console.error(e);
-      setChat((prev) => [...prev, "❌ Deposit failed."]);
+      console.error("Deposit error:", e);
+      setChat((prev) => [...prev, `❌ Deposit failed: ${e instanceof Error ? e.message : "Unknown error"}`]);
     }
   };
 
@@ -862,10 +747,7 @@ function Home() {
       setEmailDraft(draft);
       setChat((prev) => [...prev, `📝 Prepared email draft and calendar invite for ${primary.address}. Authenticate to send.`]);
     } else {
-      setChat((prev) => [
-        ...prev,
-        `📋 View listings below to generate an email draft. No agent email found for ${primary.address}.`,
-      ]);
+      setChat((prev) => [...prev, `📋 View listings below to generate an email draft. No agent email found for ${primary.address}.`]);
     }
     setPrompt("");
   };
@@ -892,16 +774,13 @@ function Home() {
               </h2>
             </div>
             <div className="chat-messages">
-              {chat.map((msg, i) => {
-                const isUser = msg.startsWith("👤 You:");
-                return (
-                  <div key={i} className={`message-wrapper ${isUser ? "user-message" : "system-message"}`}>
-                    <div className={`message ${isUser ? "user" : "system"}`}>
-                      <p>{msg}</p>
-                    </div>
+              {chat.map((msg, i) => (
+                <div key={i} className={`message-wrapper ${msg.startsWith("👤 You:") ? "user-message" : "system-message"}`}>
+                  <div className={`message ${msg.startsWith("👤 You:") ? "user" : "system"}`}>
+                    <p>{msg}</p>
                   </div>
-                );
-              })}
+                </div>
+              ))}
               {isLoading && (
                 <div className="message-wrapper system-message">
                   <div className="message system">
@@ -959,7 +838,7 @@ function Home() {
               {authenticated && emailDraft && listing?.agent.email && (
                 <div className="status-item complete"><div className="status-dot"></div><span>Authenticated to Send</span></div>
               )}
-              {userWalletAddress && <div className="status-item complete"><div className="status-dot"></div><span>Wallet Connected</span></div>}
+              {address && <div className="status-item complete"><div className="status-dot"></div><span>Wallet Connected</span></div>}
             </div>
           </div>
           {listing && (
@@ -999,7 +878,7 @@ function Home() {
             sendEmailAndCreateInvite={sendEmailAndCreateInvite}
             finalActionLoading={finalActionLoading}
             handleDeposit={handleDeposit}
-            userWalletAddress={userWalletAddress}
+            userWalletAddress={address || null}
           />
           {allListings.slice(0, showAllListings ? allListings.length : 3).map((list, index) => (
             <ListingCard
@@ -1014,7 +893,7 @@ function Home() {
               sendEmailAndCreateInvite={sendEmailAndCreateInvite}
               finalActionLoading={finalActionLoading}
               handleDeposit={handleDeposit}
-              userWalletAddress={userWalletAddress}
+              userWalletAddress={address || null}
             />
           ))}
         </div>
@@ -1046,34 +925,14 @@ function Home() {
   );
 }
 
-// Export the top-level Page component with providers wrapping Home
 export default function Page() {
-  const config = createConfig({
-    chains: [base],
-    connectors: [
-      coinbaseWallet({
-        appName: "Rental AI Assistant",
-        preference: "smartWalletOnly",
-      }),
-    ],
-    transports: {
-      [base.id]: http(),
-    },
-  });
-
-  const handleWalletConnect = (address: string) => {
-    // Logic handled in Web3Wrapper and Home
-  };
-
   return (
-    <WagmiProvider config={config}>
-      <QueryClientProvider client={queryClient}>
-        <AppOnchainProvider>
-          <Web3Wrapper onWalletConnect={handleWalletConnect}>
-            <Home />
-          </Web3Wrapper>
-        </AppOnchainProvider>
-      </QueryClientProvider>
-    </WagmiProvider>
+    <QueryClientProvider client={queryClient}>
+      <AppOnchainProvider>
+        <Web3Wrapper>
+          <Home />
+        </Web3Wrapper>
+      </AppOnchainProvider>
+    </QueryClientProvider>
   );
 }
