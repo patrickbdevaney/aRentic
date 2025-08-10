@@ -251,9 +251,20 @@ async function sendUsdcToDeposit(signer: ethers.Signer, amount: number, escrowAd
   }
 }
 
-// Web3-specific component to isolate useAccount
-function Web3Wrapper({ children }: { children: React.ReactNode }) {
+// Web3-specific component to isolate useAccount and useWalletClient
+function Web3Wrapper({
+  children,
+  onAccountChange,
+}: {
+  children: (address: string | undefined, signer: ethers.Signer | null) => React.ReactNode;
+  onAccountChange: (address: string | undefined, signer: ethers.Signer | null) => void;
+}) {
   const { isConnected, address } = useAccount();
+  const signer = useEthersSigner();
+
+  useEffect(() => {
+    onAccountChange(address, signer);
+  }, [address, signer, onAccountChange]);
 
   return (
     <div>
@@ -263,7 +274,7 @@ function Web3Wrapper({ children }: { children: React.ReactNode }) {
       {isConnected && address && (
         <p style={{ color: "#22c55e", textAlign: "center" }}>✅ Wallet Connected: {address}</p>
       )}
-      {children}
+      {children(address, signer)}
     </div>
   );
 }
@@ -343,7 +354,6 @@ function ListingCard({
             className="copy-draft-button"
             onClick={() => {
               navigator.clipboard.writeText(listingDrafts[list.id]);
-              // Note: setChat is not available in this component, so this needs to be passed as a prop if required
             }}
           >
             📋 Copy Draft
@@ -409,8 +419,8 @@ function Home() {
   const [authenticated, setAuthenticated] = useState<boolean>(false);
   const [finalActionLoading, setFinalActionLoading] = useState<{ [key: string]: boolean }>({});
   const [account, setAccount] = useState<AccountInfo | null>(null);
-  const { address } = useAccount();
-  const signer = useEthersSigner();
+  const [address, setAddress] = useState<string | undefined>(undefined);
+  const [signer, setSigner] = useState<ethers.Signer | null>(null);
 
   // Initialize MSAL
   useEffect(() => {
@@ -829,141 +839,132 @@ function Home() {
   return (
     <QueryClientProvider client={queryClient}>
       <WagmiProvider config={wagmiConfig}>
-        <Web3Wrapper>
-          <div className="container">
-            <div className="header">
-              <h1 className="main-title">🏠 Rental AI Assistant</h1>
-              <p className="subtitle">The smartest way to find and schedule your next rental with crypto escrow.</p>
-            </div>
+        <Web3Wrapper
+          onAccountChange={(newAddress, newSigner) => {
+            setAddress(newAddress);
+            setSigner(newSigner);
+          }}
+        >
+          {(address, signer) => (
+            <div className="container">
+              <div className="header">
+                <h1 className="main-title">🏠 Rental AI Assistant</h1>
+                <p className="subtitle">The smartest way to find and schedule your next rental with crypto escrow.</p>
+              </div>
 
-            <div className="pre-schedule-section">
-              <h3>🗓️ Set Your Weekly Availability</h3>
-              <p>Tell us when you're free, and our AI will schedule viewings for you. (Coming Soon!)</p>
-            </div>
+              <div className="pre-schedule-section">
+                <h3>🗓️ Set Your Weekly Availability</h3>
+                <p>Tell us when you're free, and our AI will schedule viewings for you. (Coming Soon!)</p>
+              </div>
 
-            <div className="main-grid">
-              <div className="chat-section">
-                <div className="chat-container">
-                  <div className="chat-header">
-                    <h2 className="chat-title">
-                      💬 Chat
-                      {isLoading && <div className="spinner"></div>}
-                    </h2>
-                  </div>
-                  <div className="chat-messages">
-                    {chat.map((msg, i) => {
-                      const isUser = msg.startsWith("👤 You:");
-                      return (
-                        <div key={i} className={`message-wrapper ${isUser ? "user-message" : "system-message"}`}>
-                          <div className={`message ${isUser ? "user" : "system"}`}>
-                            <p>{msg}</p>
+              <div className="main-grid">
+                <div className="chat-section">
+                  <div className="chat-container">
+                    <div className="chat-header">
+                      <h2 className="chat-title">
+                        💬 Chat
+                        {isLoading && <div className="spinner"></div>}
+                      </h2>
+                    </div>
+                    <div className="chat-messages">
+                      {chat.map((msg, i) => {
+                        const isUser = msg.startsWith("👤 You:");
+                        return (
+                          <div key={i} className={`message-wrapper ${isUser ? "user-message" : "system-message"}`}>
+                            <div className={`message ${isUser ? "user" : "system"}`}>
+                              <p>{msg}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {isLoading && (
+                        <div className="message-wrapper system-message">
+                          <div className="message system">
+                            <div className="typing-indicator">
+                              <div className="dot"></div>
+                              <div className="dot"></div>
+                              <div className="dot"></div>
+                            </div>
                           </div>
                         </div>
-                      );
-                    })}
-                    {isLoading && (
-                      <div className="message-wrapper system-message">
-                        <div className="message system">
-                          <div className="typing-indicator">
-                            <div className="dot"></div>
-                            <div className="dot"></div>
-                            <div className="dot"></div>
-                          </div>
-                        </div>
+                      )}
+                    </div>
+                    <div className="input-area">
+                      <div className="input-wrapper">
+                        <input
+                          type="text"
+                          className="chat-input"
+                          value={prompt}
+                          onChange={(e) => setPrompt(e.target.value)}
+                          onKeyPress={(e) => e.key === "Enter" && handleSubmit()}
+                          placeholder="e.g., 2BR 1BA apartment in Williamsburg, New York under $3000"
+                          disabled={isLoading}
+                        />
+                        <select
+                          className="state-select"
+                          value={selectedState}
+                          onChange={(e) => setSelectedState(e.target.value)}
+                          disabled={isLoading}
+                        >
+                          {usStates.map((state) => (
+                            <option key={state.code} value={state.code}>
+                              {state.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={handleSubmit}
+                          className="send-button"
+                          disabled={isLoading || !prompt.trim()}
+                        >
+                          ✈️ Search
+                        </button>
                       </div>
-                    )}
-                  </div>
-                  <div className="input-area">
-                    <div className="input-wrapper">
-                      <input
-                        type="text"
-                        className="chat-input"
-                        value={prompt}
-                        onChange={(e) => setPrompt(e.target.value)}
-                        onKeyPress={(e) => e.key === "Enter" && handleSubmit()}
-                        placeholder="e.g., 2BR 1BA apartment in Williamsburg, New York under $3000"
-                        disabled={isLoading}
-                      />
-                      <select
-                        className="state-select"
-                        value={selectedState}
-                        onChange={(e) => setSelectedState(e.target.value)}
-                        disabled={isLoading}
-                      >
-                        {usStates.map((state) => (
-                          <option key={state.code} value={state.code}>
-                            {state.name}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        onClick={handleSubmit}
-                        className="send-button"
-                        disabled={isLoading || !prompt.trim()}
-                      >
-                        ✈️ Search
-                      </button>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="sidebar">
-                <div className="status-panel">
-                  <h3 className="panel-title">⚡ Progress</h3>
-                  <div className="status-items">
-                    {listing && <div className="status-item complete"><div className="status-dot"></div><span>Property Search</span></div>}
-                    {listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Contact Found</span></div>}
-                    {emailDraft && <div className="status-item complete"><div className="status-dot"></div><span>Email & Invite Staged</span></div>}
-                    {authenticated && emailDraft && listing?.agent.email && (
-                      <div className="status-item complete"><div className="status-dot"></div><span>Authenticated to Send</span></div>
-                    )}
-                    {address && <div className="status-item complete"><div className="status-dot"></div><span>Wallet Connected</span></div>}
-                  </div>
-                </div>
-                {listing && (
-                  <div className="listing-panel">
-                    <h3 className="panel-title">🏠 Selected Property</h3>
-                    <p><strong>Address:</strong> {listing.address}</p>
-                    <p><strong>Price:</strong> ${listing.price.toLocaleString()}/month</p>
-                    <p><strong>Beds / Baths:</strong> {listing.bedrooms} bed / {listing.bathrooms} bath</p>
-                    <p><strong>Type:</strong> {listing.propertyType}</p>
-                    <p>
-                      <strong>Listing:</strong>{" "}
-                      {listing.detailUrl !== "#" ? (
-                        <a href={formatUrl(listing.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
-                          View Agent Site
-                        </a>
-                      ) : (
-                        <span style={{ color: "#d1d5db" }}>No agent site available</span>
+                <div className="sidebar">
+                  <div className="status-panel">
+                    <h3 className="panel-title">⚡ Progress</h3>
+                    <div className="status-items">
+                      {listing && <div className="status-item complete"><div className="status-dot"></div><span>Property Search</span></div>}
+                      {listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Contact Found</span></div>}
+                      {emailDraft && <div className="status-item complete"><div className="status-dot"></div><span>Email & Invite Staged</span></div>}
+                      {authenticated && emailDraft && listing?.agent.email && (
+                        <div className="status-item complete"><div className="status-dot"></div><span>Authenticated to Send</span></div>
                       )}
-                    </p>
+                      {address && <div className="status-item complete"><div className="status-dot"></div><span>Wallet Connected</span></div>}
+                    </div>
                   </div>
-                )}
+                  {listing && (
+                    <div className="listing-panel">
+                      <h3 className="panel-title">🏠 Selected Property</h3>
+                      <p><strong>Address:</strong> {listing.address}</p>
+                      <p><strong>Price:</strong> ${listing.price.toLocaleString()}/month</p>
+                      <p><strong>Beds / Baths:</strong> {listing.bedrooms} bed / {listing.bathrooms} bath</p>
+                      <p><strong>Type:</strong> {listing.propertyType}</p>
+                      <p>
+                        <strong>Listing:</strong>{" "}
+                        {listing.detailUrl !== "#" ? (
+                          <a href={formatUrl(listing.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
+                            View Agent Site
+                          </a>
+                        ) : (
+                          <span style={{ color: "#d1d5db" }}>No agent site available</span>
+                        )}
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
 
-            <div className="listings-section">
-              <h3 className="listings-title">Your Best Matches</h3>
-              <p className="listings-subtitle">Make a more detailed prompt to get a better match.</p>
-              <div className="listings-grid">
-                <ListingCard
-                  list={testListing}
-                  handleGenerateDraft={handleGenerateDraft}
-                  listingDrafts={listingDrafts}
-                  calendarTime={calendarTime}
-                  setCalendarTime={setCalendarTime}
-                  authenticated={authenticated}
-                  handleLogin={handleLogin}
-                  sendEmailAndCreateInvite={sendEmailAndCreateInvite}
-                  finalActionLoading={finalActionLoading}
-                  handleDeposit={handleDeposit}
-                  userWalletAddress={address || null}
-                />
-                {allListings.slice(0, showAllListings ? allListings.length : 3).map((list, index) => (
+              <div className="listings-section">
+                <h3 className="listings-title">Your Best Matches</h3>
+                <p className="listings-subtitle">Make a more detailed prompt to get a better match.</p>
+                <div className="listings-grid">
                   <ListingCard
-                    key={index}
-                    list={list}
+                    list={testListing}
                     handleGenerateDraft={handleGenerateDraft}
                     listingDrafts={listingDrafts}
                     calendarTime={calendarTime}
@@ -975,530 +976,546 @@ function Home() {
                     handleDeposit={handleDeposit}
                     userWalletAddress={address || null}
                   />
-                ))}
-              </div>
-              {allListings.length > 3 && (
-                <button onClick={() => setShowAllListings(!showAllListings)} className="see-more-button">
-                  {showAllListings ? "Show Less" : `See More (${allListings.length - 3} more)`}
-                </button>
-              )}
-            </div>
-
-            {emailDraft && (
-              <div className="details-panel">
-                <h3 className="details-title">📋 Review Draft</h3>
-                <div className="details-grid">
-                  <div className="email-section">
-                    <h4 className="section-title email-title">📝 Inquiry Email</h4>
-                    <div className="instructions">
-                      <strong>Action:</strong>{" "}
-                      {authenticated && listing?.agent.email
-                        ? "Review the email and calendar invite."
-                        : "Authorize Microsoft to send or copy the draft below."}
-                    </div>
-                    <textarea
-                      className="email-textarea"
-                      value={emailDraft}
-                      onChange={(e) => setEmailDraft(e.target.value)}
+                  {allListings.slice(0, showAllListings ? allListings.length : 3).map((list, index) => (
+                    <ListingCard
+                      key={index}
+                      list={list}
+                      handleGenerateDraft={handleGenerateDraft}
+                      listingDrafts={listingDrafts}
+                      calendarTime={calendarTime}
+                      setCalendarTime={setCalendarTime}
+                      authenticated={authenticated}
+                      handleLogin={handleLogin}
+                      sendEmailAndCreateInvite={sendEmailAndCreateInvite}
+                      finalActionLoading={finalActionLoading}
+                      handleDeposit={handleDeposit}
+                      userWalletAddress={address || null}
                     />
+                  ))}
+                </div>
+                {allListings.length > 3 && (
+                  <button onClick={() => setShowAllListings(!showAllListings)} className="see-more-button">
+                    {showAllListings ? "Show Less" : `See More (${allListings.length - 3} more)`}
+                  </button>
+                )}
+              </div>
+
+              {emailDraft && (
+                <div className="details-panel">
+                  <h3 className="details-title">📋 Review Draft</h3>
+                  <div className="details-grid">
+                    <div className="email-section">
+                      <h4 className="section-title email-title">📝 Inquiry Email</h4>
+                      <div className="instructions">
+                        <strong>Action:</strong>{" "}
+                        {authenticated && listing?.agent.email
+                          ? "Review the email and calendar invite."
+                          : "Authorize Microsoft to send or copy the draft below."}
+                      </div>
+                      <textarea
+                        className="email-textarea"
+                        value={emailDraft}
+                        onChange={(e) => setEmailDraft(e.target.value)}
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            <style jsx>{`
-              .container {
-                min-height: 100vh;
-                background: linear-gradient(135deg, #0f172a 0%, #581c87 50%, #0f172a 100%);
-                padding: 2rem;
-              }
-              .header {
-                text-align: center;
-                margin-bottom: 3rem;
-                padding-top: 1rem;
-              }
-              .main-title {
-                font-size: 2.5rem;
-                font-weight: bold;
-                color: white;
-                margin-bottom: 0.5rem;
-                background: linear-gradient(45deg, #60a5fa, #a855f7);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
-              }
-              .subtitle {
-                font-size: 1.1rem;
-                color: #d1d5db;
-                font-weight: 300;
-              }
-              .pre-schedule-section {
-                text-align: center;
-                color: white;
-                background: rgba(255, 255, 255, 0.1);
-                padding: 1rem;
-                border-radius: 1rem;
-                max-width: 800px;
-                margin: 2rem auto;
-              }
-              .listings-subtitle {
-                color: #d1d5db;
-                text-align: center;
-                margin-top: -1rem;
-                margin-bottom: 2rem;
-              }
-              .see-more-button {
-                display: block;
-                margin: 2rem auto;
-                padding: 0.75rem 2rem;
-                background: transparent;
-                border: 1px solid white;
-                color: white;
-                border-radius: 0.5rem;
-                cursor: pointer;
-              }
-              .see-more-button:hover {
-                background: rgba(255, 255, 255, 0.1);
-              }
-              .main-grid {
-                display: grid;
-                grid-template-columns: 2fr 1fr;
-                gap: 2rem;
-                max-width: 1200px;
-                margin: 0 auto 3rem;
-              }
-              @media (max-width: 768px) {
+              <style jsx>{`
+                .container {
+                  min-height: 100vh;
+                  background: linear-gradient(135deg, #0f172a 0%, #581c87 50%, #0f172a 100%);
+                  padding: 2rem;
+                }
+                .header {
+                  text-align: center;
+                  margin-bottom: 3rem;
+                  padding-top: 1rem;
+                }
+                .main-title {
+                  font-size: 2.5rem;
+                  font-weight: bold;
+                  color: white;
+                  margin-bottom: 0.5rem;
+                  background: linear-gradient(45deg, #60a5fa, #a855f7);
+                  -webkit-background-clip: text;
+                  -webkit-text-fill-color: transparent;
+                  background-clip: text;
+                }
+                .subtitle {
+                  font-size: 1.1rem;
+                  color: #d1d5db;
+                  font-weight: 300;
+                }
+                .pre-schedule-section {
+                  text-align: center;
+                  color: white;
+                  background: rgba(255, 255, 255, 0.1);
+                  padding: 1rem;
+                  border-radius: 1rem;
+                  max-width: 800px;
+                  margin: 2rem auto;
+                }
+                .listings-subtitle {
+                  color: #d1d5db;
+                  text-align: center;
+                  margin-top: -1rem;
+                  margin-bottom: 2rem;
+                }
+                .see-more-button {
+                  display: block;
+                  margin: 2rem auto;
+                  padding: 0.75rem 2rem;
+                  background: transparent;
+                  border: 1px solid white;
+                  color: white;
+                  border-radius: 0.5rem;
+                  cursor: pointer;
+                }
+                .see-more-button:hover {
+                  background: rgba(255, 255, 255, 0.1);
+                }
                 .main-grid {
+                  display: grid;
+                  grid-template-columns: 2fr 1fr;
+                  gap: 2rem;
+                  max-width: 1200px;
+                  margin: 0 auto 3rem;
+                }
+                @media (max-width: 768px) {
+                  .main-grid {
+                    grid-template-columns: 1fr;
+                  }
+                }
+                .chat-section {
+                  width: 100%;
+                }
+                .chat-container {
+                  background: rgba(255, 255, 255, 0.05);
+                  backdrop-filter: blur(20px);
+                  border-radius: 1rem;
+                  border: 1px solid rgba(255, 255, 255, 0.1);
+                  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+                }
+                .chat-header {
+                  background: linear-gradient(45deg, #2563eb, #9333ea);
+                  padding: 1rem;
+                  border-radius: 1rem 1rem 0 0;
+                }
+                .chat-title {
+                  color: white;
+                  font-size: 1.25rem;
+                  font-weight: bold;
+                  margin: 0;
+                  display: flex;
+                  align-items: center;
+                  gap: 0.5rem;
+                }
+                .spinner {
+                  width: 1.25rem;
+                  height: 1.25rem;
+                  border: 2px solid transparent;
+                  border-top: 2px solid white;
+                  border-radius: 50%;
+                  animation: spin 1s linear infinite;
+                }
+                .chat-messages {
+                  height: 20rem;
+                  overflow-y: auto;
+                  padding: 1.5rem;
+                  background: rgba(15, 23, 42, 0.8);
+                  display: flex;
+                  flex-direction: column;
+                  gap: 0.75rem;
+                }
+                .message-wrapper {
+                  display: flex;
+                  animation: fadeIn 0.3s ease-out;
+                }
+                .message-wrapper.user-message {
+                  justify-content: flex-end;
+                }
+                .message-wrapper.system-message {
+                  justify-content: flex-start;
+                }
+                .message {
+                  max-width: 80%;
+                  padding: 0.75rem 1rem;
+                  border-radius: 0.75rem;
+                }
+                .message.user {
+                  background: linear-gradient(45deg, #3b82f6, #9333ea);
+                  color: white;
+                }
+                .message.system {
+                  background: rgba(255, 255, 255, 0.1);
+                  color: white;
+                  border: 1px solid rgba(255, 255, 255, 0.15);
+                }
+                .message p {
+                  margin: 0;
+                  font-size: 0.9rem;
+                  line-height: 1.4;
+                }
+                .typing-indicator {
+                  display: flex;
+                  gap: 0.4rem;
+                }
+                .dot {
+                  width: 0.4rem;
+                  height: 0.4rem;
+                  background: #60a5fa;
+                  border-radius: 50%;
+                  animation: bounce 1.2s ease-in-out infinite both;
+                }
+                .dot:nth-child(1) {
+                  animation-delay: -0.24s;
+                }
+                .dot:nth-child(2) {
+                  animation-delay: -0.12s;
+                }
+                .input-area {
+                  padding: 1rem;
+                  background: rgba(15, 23, 42, 0.8);
+                  border-top: 1px solid rgba(255, 255, 255, 0.1);
+                }
+                .input-wrapper {
+                  display: flex;
+                  gap: 0.5rem;
+                  align-items: center;
+                }
+                .chat-input {
+                  flex: 1;
+                  padding: 0.75rem 1rem;
+                  background: rgba(255, 255, 255, 0.05);
+                  border: 1px solid rgba(255, 255, 255, 0.1);
+                  border-radius: 0.5rem;
+                  color: white;
+                  outline: none;
+                }
+                .chat-input::placeholder {
+                  color: #9ca3af;
+                }
+                .chat-input:focus {
+                  border-color: #3b82f6;
+                }
+                .state-select {
+                  padding: 0.75rem;
+                  background: rgba(255, 255, 255, 0.05);
+                  border: 1px solid rgba(255, 255, 255, 0.1);
+                  border-radius: 0.5rem;
+                  color: white;
+                  cursor: pointer;
+                }
+                .state-select:focus {
+                  border-color: #9333ea;
+                }
+                .state-select option {
+                  color: #000000;
+                  background: #ffffff;
+                }
+                .state-select option:hover {
+                  background: #e0e7ff;
+                }
+                .send-button {
+                  background: linear-gradient(45deg, #2563eb, #9333ea);
+                  color: white;
+                  font-weight: 600;
+                  padding: 0.75rem 1.5rem;
+                  border: none;
+                  border-radius: 0.5rem;
+                  cursor: pointer;
+                }
+                .send-button:hover:not(:disabled) {
+                  transform: scale(1.05);
+                }
+                .send-button:disabled {
+                  opacity: 0.5;
+                  cursor: not-allowed;
+                }
+                .sidebar {
+                  display: flex;
+                  flex-direction: column;
+                  gap: 1.5rem;
+                }
+                .status-panel,
+                .listing-panel {
+                  background: rgba(255, 255, 255, 0.05);
+                  backdrop-filter: blur(20px);
+                  border-radius: 1rem;
+                  border: 1px solid rgba(255, 255, 255, 0.1);
+                  padding: 1.5rem;
+                  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+                }
+                .panel-title {
+                  color: white;
+                  font-size: 1.25rem;
+                  font-weight: bold;
+                  margin: 0 0 1rem;
+                }
+                .status-items {
+                  display: flex;
+                  flex-direction: column;
+                  gap: 0.5rem;
+                }
+                .status-item {
+                  display: flex;
+                  align-items: center;
+                  gap: 0.5rem;
+                  padding: 0.5rem;
+                  border-radius: 0.5rem;
+                  background: rgba(34, 197, 94, 0.1);
+                  border: 1px solid rgba(34, 197, 94, 0.2);
+                }
+                .status-dot {
+                  width: 0.5rem;
+                  height: 0.5rem;
+                  border-radius: 50%;
+                  background: #22c55e;
+                }
+                .status-item span {
+                  color: white;
+                  font-size: 0.9rem;
+                }
+                .listing-panel p {
+                  color: white;
+                  font-size: 0.9rem;
+                  margin: 0.5rem 0;
+                }
+                .agent-link {
+                  color: #60a5fa;
+                  text-decoration: underline;
+                }
+                .agent-link:hover {
+                  color: #93c5fd;
+                }
+                .listings-section {
+                  max-width: 1200px;
+                  margin: 0 auto 3rem;
+                }
+                .listings-title {
+                  color: white;
+                  font-size: 1.5rem;
+                  font-weight: bold;
+                  margin: 0 0 1.5rem;
+                }
+                .listings-grid {
+                  display: grid;
+                  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+                  gap: 1.5rem;
+                }
+                .listing-card {
+                  background: rgba(255, 255, 255, 0.05);
+                  backdrop-filter: blur(20px);
+                  border-radius: 1rem;
+                  border: 1px solid rgba(255, 255, 255, 0.1);
+                  padding: 1.5rem;
+                  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+                  transition: transform 0.2s;
+                }
+                .listing-card:hover {
+                  transform: scale(1.02);
+                }
+                .listing-card p {
+                  color: white;
+                  font-size: 0.9rem;
+                  margin: 0.5rem 0;
+                }
+                .generate-draft-button {
+                  background: linear-gradient(45deg, #3b82f6, #9333ea);
+                  color: white;
+                  font-weight: 600;
+                  padding: 0.75rem 1.5rem;
+                  border: none;
+                  border-radius: 0.5rem;
+                  cursor: pointer;
+                  margin-top: 1rem;
+                  width: 100%;
+                }
+                .generate-draft-button:hover:not(:disabled) {
+                  transform: scale(1.05);
+                }
+                .generate-draft-button:disabled {
+                  opacity: 0.5;
+                  cursor: not-allowed;
+                }
+                .onramp-button {
+                  background: linear-gradient(45deg, #16a34a, #059669);
+                  color: white;
+                  font-weight: 600;
+                  padding: 0.75rem 1.5rem;
+                  border: none;
+                  border-radius: 0.5rem;
+                  cursor: pointer;
+                  margin-top: 0.5rem;
+                  width: 100%;
+                }
+                .onramp-button:hover:not(:disabled) {
+                  transform: scale(1.05);
+                }
+                .draft-container {
+                  margin-top: 1rem;
+                  display: flex;
+                  flex-direction: column;
+                  gap: 0.75rem;
+                }
+                .draft-textarea {
+                  width: 100%;
+                  height: 6rem;
+                  padding: 0.75rem;
+                  background: rgba(255, 255, 255, 0.05);
+                  border: 1px solid rgba(255, 255, 255, 0.1);
+                  border-radius: 0.5rem;
+                  color: white;
+                  resize: none;
+                  outline: none;
+                }
+                .datetime-input {
+                  height: 2.5rem;
+                }
+                .copy-draft-button {
+                  background: linear-gradient(45deg, #16a34a, #059669);
+                  color: white;
+                  font-weight: 600;
+                  padding: 0.75rem 1.5rem;
+                  border: none;
+                  border-radius: 0.5rem;
+                  cursor: pointer;
+                }
+                .copy-draft-button:hover {
+                  transform: scale(1.05);
+                }
+                .auth-button {
+                  background: linear-gradient(45deg, #2563eb, #9333ea);
+                  color: white;
+                  font-weight: 600;
+                  padding: 0.75rem 1.5rem;
+                  border: none;
+                  border-radius: 0.5rem;
+                  cursor: pointer;
+                }
+                .auth-button:hover {
+                  transform: scale(1.05);
+                }
+                .execute-button {
+                  background: linear-gradient(45deg, #16a34a, #059669);
+                  color: white;
+                  font-weight: 600;
+                  padding: 0.75rem 1.5rem;
+                  border: none;
+                  border-radius: 0.5rem;
+                  cursor: pointer;
+                }
+                .execute-button:hover:not(:disabled) {
+                  transform: scale(1.05);
+                }
+                .execute-button:disabled {
+                  opacity: 0.5;
+                  cursor: not-allowed;
+                }
+                .deposit-button {
+                  background: linear-gradient(45deg, #d97706, #b45309);
+                  color: white;
+                  font-weight: 600;
+                  padding: 0.75rem 1.5rem;
+                  border: none;
+                  border-radius: 0.5rem;
+                  cursor: pointer;
+                  margin-top: 0.5rem;
+                  width: 100%;
+                }
+                .deposit-button:hover:not(:disabled) {
+                  transform: scale(1.05);
+                }
+                .deposit-button:disabled {
+                  opacity: 0.5;
+                  cursor: not-allowed;
+                }
+                .details-panel {
+                  max-width: 1200px;
+                  margin: 0 auto;
+                  background: rgba(255, 255, 255, 0.05);
+                  backdrop-filter: blur(20px);
+                  border-radius: 1rem;
+                  border: 1px solid rgba(255, 255, 255, 0.1);
+                  padding: 1.5rem;
+                  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+                }
+                .details-title {
+                  color: white;
+                  font-size: 1.5rem;
+                  font-weight: bold;
+                  margin: 0 0 1.5rem;
+                }
+                .details-grid {
+                  display: grid;
                   grid-template-columns: 1fr;
+                  gap: 1.5rem;
                 }
-              }
-              .chat-section {
-                width: 100%;
-              }
-              .chat-container {
-                background: rgba(255, 255, 255, 0.05);
-                backdrop-filter: blur(20px);
-                border-radius: 1rem;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
-              }
-              .chat-header {
-                background: linear-gradient(45deg, #2563eb, #9333ea);
-                padding: 1rem;
-                border-radius: 1rem 1rem 0 0;
-              }
-              .chat-title {
-                color: white;
-                font-size: 1.25rem;
-                font-weight: bold;
-                margin: 0;
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-              }
-              .spinner {
-                width: 1.25rem;
-                height: 1.25rem;
-                border: 2px solid transparent;
-                border-top: 2px solid white;
-                border-radius: 50%;
-                animation: spin 1s linear infinite;
-              }
-              .chat-messages {
-                height: 20rem;
-                overflow-y: auto;
-                padding: 1.5rem;
-                background: rgba(15, 23, 42, 0.8);
-                display: flex;
-                flex-direction: column;
-                gap: 0.75rem;
-              }
-              .message-wrapper {
-                display: flex;
-                animation: fadeIn 0.3s ease-out;
-              }
-              .message-wrapper.user-message {
-                justify-content: flex-end;
-              }
-              .message-wrapper.system-message {
-                justify-content: flex-start;
-              }
-              .message {
-                max-width: 80%;
-                padding: 0.75rem 1rem;
-                border-radius: 0.75rem;
-              }
-              .message.user {
-                background: linear-gradient(45deg, #3b82f6, #9333ea);
-                color: white;
-              }
-              .message.system {
-                background: rgba(255, 255, 255, 0.1);
-                color: white;
-                border: 1px solid rgba(255, 255, 255, 0.15);
-              }
-              .message p {
-                margin: 0;
-                font-size: 0.9rem;
-                line-height: 1.4;
-              }
-              .typing-indicator {
-                display: flex;
-                gap: 0.4rem;
-              }
-              .dot {
-                width: 0.4rem;
-                height: 0.4rem;
-                background: #60a5fa;
-                border-radius: 50%;
-                animation: bounce 1.2s ease-in-out infinite both;
-              }
-              .dot:nth-child(1) {
-                animation-delay: -0.24s;
-              }
-              .dot:nth-child(2) {
-                animation-delay: -0.12s;
-              }
-              .input-area {
-                padding: 1rem;
-                background: rgba(15, 23, 42, 0.8);
-                border-top: 1px solid rgba(255, 255, 255, 0.1);
-              }
-              .input-wrapper {
-                display: flex;
-                gap: 0.5rem;
-                align-items: center;
-              }
-              .chat-input {
-                flex: 1;
-                padding: 0.75rem 1rem;
-                background: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 0.5rem;
-                color: white;
-                outline: none;
-              }
-              .chat-input::placeholder {
-                color: #9ca3af;
-              }
-              .chat-input:focus {
-                border-color: #3b82f6;
-              }
-              .state-select {
-                padding: 0.75rem;
-                background: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 0.5rem;
-                color: white;
-                cursor: pointer;
-              }
-              .state-select:focus {
-                border-color: #9333ea;
-              }
-              .state-select option {
-                color: #000000;
-                background: #ffffff;
-              }
-              .state-select option:hover {
-                background: #e0e7ff;
-              }
-              .send-button {
-                background: linear-gradient(45deg, #2563eb, #9333ea);
-                color: white;
-                font-weight: 600;
-                padding: 0.75rem 1.5rem;
-                border: none;
-                border-radius: 0.5rem;
-                cursor: pointer;
-              }
-              .send-button:hover:not(:disabled) {
-                transform: scale(1.05);
-              }
-              .send-button:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
-              }
-              .sidebar {
-                display: flex;
-                flex-direction: column;
-                gap: 1.5rem;
-              }
-              .status-panel,
-              .listing-panel {
-                background: rgba(255, 255, 255, 0.05);
-                backdrop-filter: blur(20px);
-                border-radius: 1rem;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                padding: 1.5rem;
-                box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
-              }
-              .panel-title {
-                color: white;
-                font-size: 1.25rem;
-                font-weight: bold;
-                margin: 0 0 1rem;
-              }
-              .status-items {
-                display: flex;
-                flex-direction: column;
-                gap: 0.5rem;
-              }
-              .status-item {
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-                padding: 0.5rem;
-                border-radius: 0.5rem;
-                background: rgba(34, 197, 94, 0.1);
-                border: 1px solid rgba(34, 197, 94, 0.2);
-              }
-              .status-dot {
-                width: 0.5rem;
-                height: 0.5rem;
-                border-radius: 50%;
-                background: #22c55e;
-              }
-              .status-item span {
-                color: white;
-                font-size: 0.9rem;
-              }
-              .listing-panel p {
-                color: white;
-                font-size: 0.9rem;
-                margin: 0.5rem 0;
-              }
-              .agent-link {
-                color: #60a5fa;
-                text-decoration: underline;
-              }
-              .agent-link:hover {
-                color: #93c5fd;
-              }
-              .listings-section {
-                max-width: 1200px;
-                margin: 0 auto 3rem;
-              }
-              .listings-title {
-                color: white;
-                font-size: 1.5rem;
-                font-weight: bold;
-                margin: 0 0 1.5rem;
-              }
-              .listings-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-                gap: 1.5rem;
-              }
-              .listing-card {
-                background: rgba(255, 255, 255, 0.05);
-                backdrop-filter: blur(20px);
-                border-radius: 1rem;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                padding: 1.5rem;
-                box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
-                transition: transform 0.2s;
-              }
-              .listing-card:hover {
-                transform: scale(1.02);
-              }
-              .listing-card p {
-                color: white;
-                font-size: 0.9rem;
-                margin: 0.5rem 0;
-              }
-              .generate-draft-button {
-                background: linear-gradient(45deg, #3b82f6, #9333ea);
-                color: white;
-                font-weight: 600;
-                padding: 0.75rem 1.5rem;
-                border: none;
-                border-radius: 0.5rem;
-                cursor: pointer;
-                margin-top: 1rem;
-                width: 100%;
-              }
-              .generate-draft-button:hover:not(:disabled) {
-                transform: scale(1.05);
-              }
-              .generate-draft-button:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
-              }
-              .onramp-button {
-                background: linear-gradient(45deg, #16a34a, #059669);
-                color: white;
-                font-weight: 600;
-                padding: 0.75rem 1.5rem;
-                border: none;
-                border-radius: 0.5rem;
-                cursor: pointer;
-                margin-top: 0.5rem;
-                width: 100%;
-              }
-              .onramp-button:hover:not(:disabled) {
-                transform: scale(1.05);
-              }
-              .draft-container {
-                margin-top: 1rem;
-                display: flex;
-                flex-direction: column;
-                gap: 0.75rem;
-              }
-              .draft-textarea {
-                width: 100%;
-                height: 6rem;
-                padding: 0.75rem;
-                background: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 0.5rem;
-                color: white;
-                resize: none;
-                outline: none;
-              }
-              .datetime-input {
-                height: 2.5rem;
-              }
-              .copy-draft-button {
-                background: linear-gradient(45deg, #16a34a, #059669);
-                color: white;
-                font-weight: 600;
-                padding: 0.75rem 1.5rem;
-                border: none;
-                border-radius: 0.5rem;
-                cursor: pointer;
-              }
-              .copy-draft-button:hover {
-                transform: scale(1.05);
-              }
-              .auth-button {
-                background: linear-gradient(45deg, #2563eb, #9333ea);
-                color: white;
-                font-weight: 600;
-                padding: 0.75rem 1.5rem;
-                border: none;
-                border-radius: 0.5rem;
-                cursor: pointer;
-              }
-              .auth-button:hover {
-                transform: scale(1.05);
-              }
-              .execute-button {
-                background: linear-gradient(45deg, #16a34a, #059669);
-                color: white;
-                font-weight: 600;
-                padding: 0.75rem 1.5rem;
-                border: none;
-                border-radius: 0.5rem;
-                cursor: pointer;
-              }
-              .execute-button:hover:not(:disabled) {
-                transform: scale(1.05);
-              }
-              .execute-button:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
-              }
-              .deposit-button {
-                background: linear-gradient(45deg, #d97706, #b45309);
-                color: white;
-                font-weight: 600;
-                padding: 0.75rem 1.5rem;
-                border: none;
-                border-radius: 0.5rem;
-                cursor: pointer;
-                margin-top: 0.5rem;
-                width: 100%;
-              }
-              .deposit-button:hover:not(:disabled) {
-                transform: scale(1.05);
-              }
-              .deposit-button:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
-              }
-              .details-panel {
-                max-width: 1200px;
-                margin: 0 auto;
-                background: rgba(255, 255, 255, 0.05);
-                backdrop-filter: blur(20px);
-                border-radius: 1rem;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                padding: 1.5rem;
-                box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
-              }
-              .details-title {
-                color: white;
-                font-size: 1.5rem;
-                font-weight: bold;
-                margin: 0 0 1.5rem;
-              }
-              .details-grid {
-                display: grid;
-                grid-template-columns: 1fr;
-                gap: 1.5rem;
-              }
-              .email-section {
-                display: flex;
-                flex-direction: column;
-                gap: 1rem;
-              }
-              .section-title {
-                font-size: 1.1rem;
-                font-weight: 600;
-                margin: 0;
-              }
-              .email-title {
-                color: #93c5fd;
-              }
-              .instructions {
-                padding: 0.75rem;
-                background: rgba(30, 64, 175, 0.2);
-                border-left: 3px solid #60a5fa;
-                color: #e0e7ff;
-                font-size: 0.9rem;
-                border-radius: 0.5rem;
-              }
-              .email-textarea {
-                width: 100%;
-                height: 10rem;
-                padding: 1rem;
-                background: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 0.5rem;
-                color: white;
-                resize: none;
-                outline: none;
-              }
-              .email-textarea:focus {
-                border-color: #3b82f6;
-              }
-              @keyframes fadeIn {
-                from {
-                  opacity: 0;
-                  transform: translateY(10px);
+                .email-section {
+                  display: flex;
+                  flex-direction: column;
+                  gap: 1rem;
                 }
-                to {
-                  opacity: 1;
-                  transform: translateY(0);
+                .section-title {
+                  font-size: 1.1rem;
+                  font-weight: 600;
+                  margin: 0;
                 }
-              }
-              @keyframes spin {
-                to {
-                  transform: rotate(360deg);
+                .email-title {
+                  color: #93c5fd;
                 }
-              }
-              @keyframes bounce {
-                0%,
-                80%,
-                100% {
-                  transform: scale(0);
+                .instructions {
+                  padding: 0.75rem;
+                  background: rgba(30, 64, 175, 0.2);
+                  border-left: 3px solid #60a5fa;
+                  color: #e0e7ff;
+                  font-size: 0.9rem;
+                  border-radius: 0.5rem;
                 }
-                40% {
-                  transform: scale(1);
+                .email-textarea {
+                  width: 100%;
+                  height: 10rem;
+                  padding: 1rem;
+                  background: rgba(255, 255, 255, 0.05);
+                  border: 1px solid rgba(255, 255, 255, 0.1);
+                  border-radius: 0.5rem;
+                  color: white;
+                  resize: none;
+                  outline: none;
                 }
-              }
-            `}</style>
-          </div>
+                .email-textarea:focus {
+                  border-color: #3b82f6;
+                }
+                @keyframes fadeIn {
+                  from {
+                    opacity: 0;
+                    transform: translateY(10px);
+                  }
+                  to {
+                    opacity: 1;
+                    transform: translateY(0);
+                  }
+                }
+                @keyframes spin {
+                  to {
+                    transform: rotate(360deg);
+                  }
+                }
+                @keyframes bounce {
+                  0%,
+                  80%,
+                  100% {
+                    transform: scale(0);
+                  }
+                  40% {
+                    transform: scale(1);
+                  }
+                }
+              `}</style>
+            </div>
+          )}
         </Web3Wrapper>
       </WagmiProvider>
     </QueryClientProvider>
