@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, Suspense, ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createConfig, http, WagmiProvider } from "wagmi";
+import { createConfig, http, WagmiProvider, useConnect, useAccount } from "wagmi";
 import { base } from "wagmi/chains";
 import "./styles.css";
 
@@ -98,13 +98,13 @@ const usStates = [
 ];
 
 const cityAliases: { [key: string]: { city: string; state: string } } = {
-  "nyc": { city: "New York", state: "NY" },
+  nyc: { city: "New York", state: "NY" },
   "new york": { city: "New York", state: "NY" },
-  "ny": { city: "New York", state: "NY" },
-  "la": { city: "Los Angeles", state: "CA" },
-  "sf": { city: "San Francisco", state: "CA" },
-  "chicago": { city: "Chicago", state: "IL" },
-  "miami": { city: "Miami", state: "FL" },
+  ny: { city: "New York", state: "NY" },
+  la: { city: "Los Angeles", state: "CA" },
+  sf: { city: "San Francisco", state: "CA" },
+  chicago: { city: "Chicago", state: "IL" },
+  miami: { city: "Miami", state: "FL" },
 };
 
 // MSAL and Groq instances (loaded dynamically)
@@ -139,12 +139,23 @@ const loadJsPDF = async () => {
   return jsPDF;
 };
 
-// Dynamic imports for components
-const AuthButton = dynamic(() => import("@coinbase/cdp-react").then((mod) => mod.AuthButton), {
-  ssr: false,
-  loading: () => <div>Loading Auth Button...</div>,
-});
+// Custom ConnectWalletButton component
+const ConnectWalletButton = () => {
+  const { connect, connectors } = useConnect();
+  const { isConnecting } = useAccount();
 
+  return (
+    <button
+      onClick={() => connect({ connector: connectors[0] })}
+      className="auth-button"
+      disabled={isConnecting}
+    >
+      {isConnecting ? "Connecting..." : "Connect Coinbase Wallet"}
+    </button>
+  );
+};
+
+// Dynamic imports for components
 const AppOnchainProvider = dynamic(() => import("@/components/OnchainProvider").then((mod) => mod.AppOnchainProvider), {
   ssr: false,
   loading: () => <div>Loading Onchain Provider...</div>,
@@ -227,7 +238,7 @@ const Web3Wrapper = dynamic(
           children,
           onWalletConnect,
         }: {
-          children: React.ReactNode;
+          children: ReactNode;
           onWalletConnect: (address: string) => void;
         }) {
           const { isConnected, address } = useAccount();
@@ -247,8 +258,8 @@ const Web3Wrapper = dynamic(
                 </p>
               ) : (
                 <div style={{ display: "flex", justifyContent: "center", margin: "1rem 0" }}>
-                  <Suspense fallback={<div>Loading Auth Button...</div>}>
-                    <AuthButton />
+                  <Suspense fallback={<div>Loading Wallet Button...</div>}>
+                    <ConnectWalletButton />
                   </Suspense>
                 </div>
               )}
@@ -451,6 +462,15 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   const [msalInstance, setMsalInstance] = useState<any>(null);
 
   const signer = useEthersSigner();
+
+  // Update wallet address when connected
+  const { address } = useAccount();
+  useEffect(() => {
+    if (address) {
+      setUserWalletAddress(address);
+      onWalletConnect(address);
+    }
+  }, [address, onWalletConnect]);
 
   // Initialize MSAL
   useEffect(() => {
@@ -1258,23 +1278,21 @@ export default function Page() {
     },
   });
 
-  const handleWalletConnect = (address: string) => {
-    console.log(`Wallet connected: ${address}`);
-  };
-
   return (
-    <WagmiProvider config={config}>
-      <QueryClientProvider client={queryClient}>
-        <Suspense fallback={<div>Loading Onchain Provider...</div>}>
-          <AppOnchainProvider>
-            <Suspense fallback={<div>Loading Wallet Connection...</div>}>
-              <Web3Wrapper onWalletConnect={handleWalletConnect}>
-                <Home onWalletConnect={handleWalletConnect} />
-              </Web3Wrapper>
-            </Suspense>
-          </AppOnchainProvider>
-        </Suspense>
-      </QueryClientProvider>
-    </WagmiProvider>
+    <div>
+      <WagmiProvider config={config}>
+        <QueryClientProvider client={queryClient}>
+          <Suspense fallback={<div>Loading Onchain Provider...</div>}>
+            <AppOnchainProvider>
+              <Suspense fallback={<div>Loading Wallet Connection...</div>}>
+                <Web3Wrapper onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)}>
+                  <Home onWalletConnect={(address) => console.log(`Wallet connected: ${address}`)} />
+                </Web3Wrapper>
+              </Suspense>
+            </AppOnchainProvider>
+          </Suspense>
+        </QueryClientProvider>
+      </WagmiProvider>
+    </div>
   );
 }
