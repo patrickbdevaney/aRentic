@@ -1,22 +1,14 @@
-
 "use client";
 
-import { useState, useEffect } from "react";
-import { PublicClientApplication, InteractionRequiredAuthError } from "@azure/msal-browser";
-import { Groq } from "groq-sdk";
-import { useAccount, useWalletClient, useSignMessage } from "wagmi";
+import { useState, useEffect, Suspense } from "react";
+import dynamic from "next/dynamic";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ethers, BrowserProvider } from "ethers";
-import { AppOnchainProvider } from "@/components/OnchainProvider";
-import { sendUsdcToDeposit } from "@/lib/escrow";
-import jsPDF from "jspdf";
-import { AuthButton } from "@coinbase/cdp-react/components/AuthButton";
 import { createConfig, http, WagmiProvider } from "wagmi";
 import { base } from "wagmi/chains";
 import "./styles.css";
 
 // Force dynamic rendering for wallet connection
-export const dynamic = "force-dynamic";
+export const renderMode = "force-dynamic";
 
 // Create QueryClient instance
 const queryClient = new QueryClient();
@@ -115,6 +107,7 @@ const cityAliases: { [key: string]: { city: string; state: string } } = {
   "miami": { city: "Miami", state: "FL" },
 };
 
+// MSAL and Groq instances (loaded dynamically)
 const msalConfig = {
   auth: {
     clientId: process.env.NEXT_PUBLIC_AZURE_CLIENT_ID || "",
@@ -123,9 +116,39 @@ const msalConfig = {
   },
 };
 
-const msalInstance = typeof window !== "undefined" ? new PublicClientApplication(msalConfig) : null;
 const msalScopes = ["Calendars.ReadWrite", "Mail.Send"];
-const groq = typeof window !== "undefined" ? new Groq({ apiKey: process.env.NEXT_PUBLIC_GROQ_API_KEY || "", dangerouslyAllowBrowser: true }) : null;
+
+// Dynamically import heavy dependencies
+const loadMsal = async () => {
+  const { PublicClientApplication, InteractionRequiredAuthError } = await import("@azure/msal-browser");
+  return { PublicClientApplication, InteractionRequiredAuthError };
+};
+
+const loadGroq = async () => {
+  const { Groq } = await import("groq-sdk");
+  return new Groq({ apiKey: process.env.NEXT_PUBLIC_GROQ_API_KEY || "", dangerouslyAllowBrowser: true });
+};
+
+const loadEthers = async () => {
+  const { ethers, BrowserProvider } = await import("ethers");
+  return { ethers, BrowserProvider };
+};
+
+const loadJsPDF = async () => {
+  const { default: jsPDF } = await import("jspdf");
+  return jsPDF;
+};
+
+// Dynamic imports for components
+const AuthButton = dynamic(() => import("@coinbase/cdp-react").then((mod) => mod.AuthButton), {
+  ssr: false,
+  loading: () => <div>Loading Auth Button...</div>,
+});
+
+const AppOnchainProvider = dynamic(() => import("@/components/OnchainProvider").then((mod) => mod.AppOnchainProvider), {
+  ssr: false,
+  loading: () => <div>Loading Onchain Provider...</div>,
+});
 
 const testListing: Listing = {
   id: "test-listing",
@@ -159,189 +182,245 @@ const getDefaultBusinessTime = (): string => {
 // Function to generate Street View URL
 const getStreetViewUrl = (address: string) => {
   const encodedAddress = encodeURIComponent(address);
-  const url = `/ api / streetview ? address = ${encodedAddress} `;
+  const url = `/api/streetview?address=${encodedAddress}`;
   console.log("Street View API Route URL:", url);
   return url;
 };
 
 // Custom hook to convert WalletClient to ethers.Signer
 const useEthersSigner = () => {
-  const { data: walletClient } = useWalletClient();
-  const [signer, setSigner] = useState<ethers.Signer | null>(null);
+  const [signer, setSigner] = useState<any>(null);
 
   useEffect(() => {
-    if (walletClient) {
-      const provider = new BrowserProvider(walletClient.transport, base);
-      provider.getSigner().then(setSigner).catch((error) => {
-        console.error("Failed to get signer:", error);
+    const initializeSigner = async () => {
+      const { useWalletClient } = await import("wagmi");
+      const { data: walletClient } = useWalletClient();
+      if (walletClient) {
+        const { BrowserProvider } = await loadEthers();
+        const provider = new BrowserProvider(walletClient.transport, base);
+        try {
+          const signer = await provider.getSigner();
+          setSigner(signer);
+        } catch (error) {
+          console.error("Failed to get signer:", error);
+          setSigner(null);
+        }
+      } else {
         setSigner(null);
-      });
-    } else {
-      setSigner(null);
-    }
-  }, [walletClient]);
+      }
+    };
+    initializeSigner();
+  }, []);
 
   return signer;
 };
 
-// Web3Wrapper component to isolate useAccount
-function Web3Wrapper({
-  children,
-  onWalletConnect
-}: {
-  children: React.ReactNode;
-  onWalletConnect: (address: string) => void
-}) {
-  const { isConnected, address } = useAccount();
-  const { signMessageAsync } = useSignMessage();
+// Dynamic import for Web3Wrapper
+const Web3Wrapper = dynamic(
+  () =>
+    import("wagmi").then((wagmi) =>
+      import("react").then((react) => {
+        const { useAccount, useSignMessage } = wagmi;
+        const { useEffect } = react;
 
-  useEffect(() => {
-    if (isConnected && address) {
-      onWalletConnect(address);
-    }
-  }, [isConnected, address, onWalletConnect]);
+        return function Web3Wrapper({
+          children,
+          onWalletConnect,
+        }: {
+          children: React.ReactNode;
+          onWalletConnect: (address: string) => void;
+        }) {
+          const { isConnected, address } = useAccount();
+          const { signMessageAsync } = useSignMessage();
 
-  return (
-    <div>
-      {isConnected ? (
-        <p style={{ color: "#22c55e", textAlign: "center" }}>✅ Wallet Connected: {address}</p>
-      ) : (
-        <div style={{ display: "flex", justifyContent: "center", margin: "1rem 0" }}>
-          <AuthButton />
-        </div>
-      )}
-      {children}
-    </div>
-  );
-}
+          useEffect(() => {
+            if (isConnected && address) {
+              onWalletConnect(address);
+            }
+          }, [isConnected, address, onWalletConnect]);
 
-// Listing Card component
-function ListingCard({
-  list,
-  handleGenerateDraft,
-  listingDrafts,
-  calendarTime,
-  setCalendarTime,
-  authenticated,
-  handleLogin,
-  sendEmailAndCreateInvite,
-  finalActionLoading,
-  handleDeposit,
-  handleFundWallet,
-  isFundingWallet,
-}: {
-  list: Listing;
-  handleGenerateDraft: (listing: Listing) => void;
-  listingDrafts: { [key: string]: string };
-  calendarTime: string;
-  setCalendarTime: (time: string) => void;
-  authenticated: boolean;
-  handleLogin: () => void;
-  sendEmailAndCreateInvite: (listing: Listing, draft: string, eventTime: string) => void;
-  finalActionLoading: { [key: string]: boolean };
-  handleDeposit: (listingId: string, amountUSD: string) => void;
-  handleFundWallet: (amountUSD: string, listingId: string) => void;
-  isFundingWallet: { [key: string]: boolean };
-}) {
-  const [imageUrl, setImageUrl] = useState<string>("/fallback-image.jpg");
-
-  useEffect(() => {
-    setImageUrl(getStreetViewUrl(list.address));
-  }, [list.address]);
-
-  return (
-    <div className="listing-card">
-      <img
-        src={imageUrl}
-        alt={`Street View of ${list.address} `}
-        style={{ width: "100%", height: "200px", objectFit: "cover", borderRadius: "0.5rem" }}
-        onError={(e) => {
-          e.currentTarget.src = "/fallback-image.jpg";
-        }}
-      />
-      <p>
-        <strong>Address:</strong> {list.address}
-      </p>
-      <p>
-        <strong>Price:</strong> ${list.price.toLocaleString()}/month
-      </p>
-      <p>
-        <strong>Beds / Baths:</strong> {list.bedrooms} bed / {list.bathrooms} bath
-      </p>
-      <p>
-        <strong>Type:</strong> {list.propertyType}
-      </p>
-      {list.livingArea > 0 && (
-        <p>
-          <strong>Area:</strong> {list.livingArea.toLocaleString()} sq ft
-        </p>
-      )}
-      <p>
-        <strong>Listing:</strong>{" "}
-        {list.detailUrl !== "#" ? (
-          <a href={formatUrl(list.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
-            View Agent Site
-          </a>
-        ) : (
-          <span style={{ color: "#d1d5db" }}>No agent site available</span>
-        )}
-      </p>
-      <button className="generate-draft-button" onClick={() => handleGenerateDraft(list)}>
-        📝 Generate Email Draft
-      </button>
-      {listingDrafts[list.id] && (
-        <div className="draft-container">
-          <textarea className="draft-textarea" value={listingDrafts[list.id]} readOnly />
-          <button
-            className="copy-draft-button"
-            onClick={() => {
-              navigator.clipboard.writeText(listingDrafts[list.id]);
-            }}
-          >
-            📋 Copy Draft
-          </button>
-          {list.agent.email && (
-            <>
-              <input
-                type="datetime-local"
-                className="draft-textarea datetime-input"
-                value={calendarTime}
-                onChange={(e) => setCalendarTime(e.target.value)}
-              />
-              {!authenticated ? (
-                <button onClick={handleLogin} className="auth-button">
-                  🔐 Authorize Microsoft to Send
-                </button>
+          return (
+            <div>
+              {isConnected ? (
+                <p style={{ color: "#22c55e", textAlign: "center" }}>
+                  ✅ Wallet Connected: {address}
+                </p>
               ) : (
-                <button
-                  onClick={() => sendEmailAndCreateInvite(list, listingDrafts[list.id], calendarTime)}
-                  className="execute-button"
-                  disabled={finalActionLoading[list.id] || !list.agent.email}
-                >
-                  {finalActionLoading[list.id] ? "Sending..." : "🚀 Send Email & Invite"}
-                </button>
+                <div style={{ display: "flex", justifyContent: "center", margin: "1rem 0" }}>
+                  <Suspense fallback={<div>Loading Auth Button...</div>}>
+                    <AuthButton />
+                  </Suspense>
+                </div>
               )}
-              <button
-                onClick={() => handleFundWallet((list.price * 0.15).toFixed(2), list.id)}
-                className="fund-wallet-button"
-                disabled={isFundingWallet[list.id] || !authenticated}
-              >
-                {isFundingWallet[list.id] ? "Funding Wallet..." : "💸 Fund Wallet"}
-              </button>
-              <button
-                onClick={() => handleDeposit(list.id, (list.price * 0.15).toFixed(2))}
-                className="deposit-button"
-                disabled={finalActionLoading[list.id] || !authenticated}
-              >
-                {finalActionLoading[list.id] ? "Depositing..." : `💰 Deposit Escrow($${(list.price * 0.15).toFixed(2)})`}
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
+              {children}
+            </div>
+          );
+        };
+      })
+    ),
+  {
+    ssr: false,
+    loading: () => <div>Loading Wallet Connection...</div>,
+  }
+);
+
+// Dynamic import for ListingCard
+const ListingCard = dynamic(
+  () =>
+    Promise.all([import("react"), import("@/lib/escrow")]).then(([reactMod, escrowMod]) => {
+      const { useState, useEffect } = reactMod;
+      const { sendUsdcToDeposit } = escrowMod;
+
+      return function ListingCard({
+        list,
+        handleGenerateDraft,
+        listingDrafts,
+        calendarTime,
+        setCalendarTime,
+        authenticated,
+        handleLogin,
+        sendEmailAndCreateInvite,
+        finalActionLoading,
+        handleDeposit,
+        handleFundWallet,
+        isFundingWallet,
+      }: {
+        list: Listing;
+        handleGenerateDraft: (listing: Listing) => void;
+        listingDrafts: { [key: string]: string };
+        calendarTime: string;
+        setCalendarTime: (time: string) => void;
+        authenticated: boolean;
+        handleLogin: () => void;
+        sendEmailAndCreateInvite: (listing: Listing, draft: string, eventTime: string) => void;
+        finalActionLoading: { [key: string]: boolean };
+        handleDeposit: (listingId: string, amountUSD: string) => void;
+        handleFundWallet: (amountUSD: string, listingId: string) => void;
+        isFundingWallet: { [key: string]: boolean };
+      }) {
+        const [imageUrl, setImageUrl] = useState<string>("/fallback-image.jpg");
+
+        useEffect(() => {
+          setImageUrl(getStreetViewUrl(list.address));
+        }, [list.address]);
+
+        return (
+          <div className="listing-card">
+            <img
+              src={imageUrl}
+              alt={`Street View of ${list.address}`}
+              style={{ width: "100%", height: "200px", objectFit: "cover", borderRadius: "0.5rem" }}
+              onError={(e) => {
+                e.currentTarget.src = "/fallback-image.jpg";
+              }}
+            />
+            <p>
+              <strong>Address:</strong> {list.address}
+            </p>
+            <p>
+              <strong>Price:</strong> ${list.price.toLocaleString()}/month
+            </p>
+            <p>
+              <strong>Beds / Baths:</strong> {list.bedrooms} bed / {list.bathrooms} bath
+            </p>
+            <p>
+              <strong>Type:</strong> {list.propertyType}
+            </p>
+            {list.livingArea > 0 && (
+              <p>
+                <strong>Area:</strong> {list.livingArea.toLocaleString()} sq ft
+              </p>
+            )}
+            <p>
+              <strong>Listing:</strong>{" "}
+              {list.detailUrl !== "#" ? (
+                <a
+                  href={formatUrl(list.detailUrl)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="agent-link"
+                >
+                  View Agent Site
+                </a>
+              ) : (
+                <span style={{ color: "#d1d5db" }}>No agent site available</span>
+              )}
+            </p>
+            <button
+              className="generate-draft-button"
+              onClick={() => handleGenerateDraft(list)}
+            >
+              📝 Generate Email Draft
+            </button>
+            {listingDrafts[list.id] && (
+              <div className="draft-container">
+                <textarea
+                  className="draft-textarea"
+                  value={listingDrafts[list.id]}
+                  readOnly
+                />
+                <button
+                  className="copy-draft-button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(listingDrafts[list.id]);
+                  }}
+                >
+                  📋 Copy Draft
+                </button>
+                {list.agent.email && (
+                  <>
+                    <input
+                      type="datetime-local"
+                      className="draft-textarea datetime-input"
+                      value={calendarTime}
+                      onChange={(e) => setCalendarTime(e.target.value)}
+                    />
+                    {!authenticated ? (
+                      <button onClick={handleLogin} className="auth-button">
+                        🔐 Authorize Microsoft to Send
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() =>
+                          sendEmailAndCreateInvite(list, listingDrafts[list.id], calendarTime)
+                        }
+                        className="execute-button"
+                        disabled={finalActionLoading[list.id] || !list.agent.email}
+                      >
+                        {finalActionLoading[list.id]
+                          ? "Sending..."
+                          : "🚀 Send Email & Invite"}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleFundWallet((list.price * 0.15).toFixed(2), list.id)}
+                      className="fund-wallet-button"
+                      disabled={isFundingWallet[list.id] || !authenticated}
+                    >
+                      {isFundingWallet[list.id] ? "Funding Wallet..." : "💸 Fund Wallet"}
+                    </button>
+                    <button
+                      onClick={() => handleDeposit(list.id, (list.price * 0.15).toFixed(2))}
+                      className="deposit-button"
+                      disabled={finalActionLoading[list.id] || !authenticated}
+                    >
+                      {finalActionLoading[list.id]
+                        ? "Depositing..."
+                        : `💰 Deposit Escrow($${(list.price * 0.15).toFixed(2)})`}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      };
+    }),
+  {
+    ssr: false,
+    loading: () => <div>Loading Listing Card...</div>,
+  }
+);
 
 // Function to format URL with protocol if missing
 const formatUrl = (url: string) => {
@@ -369,18 +448,22 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   const [isFundingWallet, setIsFundingWallet] = useState<{ [key: string]: boolean }>({});
   const [account, setAccount] = useState<any>(null);
   const [userWalletAddress, setUserWalletAddress] = useState<string | null>(null);
-  const { signMessageAsync } = useSignMessage();
+  const [msalInstance, setMsalInstance] = useState<any>(null);
 
   const signer = useEthersSigner();
 
   // Initialize MSAL
   useEffect(() => {
-    if (!msalInstance) return;
-
     const initMsal = async () => {
+      if (typeof window === "undefined") return;
+
+      const { PublicClientApplication } = await loadMsal();
+      const instance = new PublicClientApplication(msalConfig);
+      setMsalInstance(instance);
+
       try {
-        await msalInstance.initialize();
-        const accounts = msalInstance.getAllAccounts();
+        await instance.initialize();
+        const accounts = instance.getAllAccounts();
         if (accounts.length > 0) {
           setAccount(accounts[0]);
           setAuthenticated(true);
@@ -416,6 +499,8 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     if (authenticated && account?.username && userWalletAddress) {
       const linkWallet = async () => {
         try {
+          const { useSignMessage } = await import("wagmi");
+          const { signMessageAsync } = useSignMessage();
           const message = `Link wallet ${userWalletAddress} to ${account.username}`;
           const signature = await signMessageAsync({ message });
           const response = await fetch("/api/user-wallet", {
@@ -435,7 +520,7 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
       };
       linkWallet();
     }
-  }, [authenticated, account, userWalletAddress, signMessageAsync]);
+  }, [authenticated, account, userWalletAddress]);
 
   const handleLogin = async () => {
     if (!msalInstance) return;
@@ -486,6 +571,7 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   };
 
   const parsePromptWithLLM = async (prompt: string): Promise<ParsedPrompt> => {
+    const groq = await loadGroq();
     if (!groq) return parsePromptFallback(prompt);
 
     try {
@@ -578,7 +664,12 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   const fetchRentals = async (query: string): Promise<{ primary: Listing | null; all: Listing[] }> => {
     try {
       const params = await parsePromptWithLLM(query);
-      const homeTypeMap: { [key: string]: string } = { apartment: "Apartment", house: "Single Family", condo: "Condo", townhome: "Townhouse" };
+      const homeTypeMap: { [key: string]: string } = {
+        apartment: "Apartment",
+        house: "Single Family",
+        condo: "Condo",
+        townhome: "Townhouse",
+      };
       const homeType = homeTypeMap[params.homeType || ""] || "Apartment";
       const searchParams = new URLSearchParams({
         city: params.city || "New York",
@@ -613,6 +704,7 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   };
 
   const generateInquiryDraft = async (listing: Listing): Promise<string> => {
+    const groq = await loadGroq();
     if (!groq) return "Could not generate inquiry draft.";
 
     try {
@@ -652,7 +744,8 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     }
   };
 
-  const generateContractPdfBase64 = (address: string): string => {
+  const generateContractPdfBase64 = async (address: string): Promise<string> => {
+    const jsPDF = await loadJsPDF();
     const doc = new jsPDF();
     doc.setFontSize(16);
     doc.text("Generic Rental Contract", 10, 10);
@@ -677,6 +770,7 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     setFinalActionLoading((prev) => ({ ...prev, [selectedListing.id]: true }));
     setChat((prev) => [...prev, `🚀 Sending inquiry email and creating calendar invite for ${selectedListing.address}...`]);
 
+    const { InteractionRequiredAuthError } = await loadMsal();
     const tokenRequest = {
       scopes: msalScopes,
       account: account,
@@ -710,7 +804,7 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
       }
     }
 
-    const pdfBase64 = generateContractPdfBase64(selectedListing.address);
+    const pdfBase64 = await generateContractPdfBase64(selectedListing.address);
 
     const emailPayload = {
       message: {
@@ -749,7 +843,13 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
         )}">View Listing Details</a><br>Please check your inbox or spam folder for my accompanying rental inquiry email.`,
       },
       attendees: [
-        { emailAddress: { name: selectedListing.agent.name || "Agent", address: selectedListing.agent.email }, type: "required" },
+        {
+          emailAddress: {
+            name: selectedListing.agent.name || "Agent",
+            address: selectedListing.agent.email,
+          },
+          type: "required",
+        },
       ],
     };
 
@@ -825,6 +925,7 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
   };
 
   const handleDeposit = async (listingId: string, amountUSD: string) => {
+    const signer = await useEthersSigner();
     if (!signer || !userWalletAddress || !authenticated) {
       setChat((prev) => [...prev, "⚠️ Please authenticate with Microsoft and Coinbase to deposit."]);
       return;
@@ -833,6 +934,11 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
     setChat((prev) => [...prev, `🚀 Checking wallet balance and initiating deposit of $${amountUSD} to escrow...`]);
 
     try {
+      const { ethers } = await loadEthers();
+      const { sendUsdcToDeposit } = await import("@/lib/escrow");
+      const { useSignMessage } = await import("wagmi");
+      const { signMessageAsync } = useSignMessage();
+
       // Check USDC balance
       const provider = signer.provider || new ethers.JsonRpcProvider(process.env.BASE_RPC_URL || "https://mainnet.base.org");
       const usdcContract = new ethers.Contract(
@@ -1002,24 +1108,62 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
           <div className="status-panel">
             <h3 className="panel-title">⚡ Progress</h3>
             <div className="status-items">
-              {listing && <div className="status-item complete"><div className="status-dot"></div><span>Property Search</span></div>}
-              {listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Contact Found</span></div>}
-              {emailDraft && <div className="status-item complete"><div className="status-dot"></div><span>Email & Invite Staged</span></div>}
-              {authenticated && emailDraft && listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Microsoft Authenticated</span></div>}
-              {userWalletAddress && <div className="status-item complete"><div className="status-dot"></div><span>Wallet Connected</span></div>}
+              {listing && (
+                <div className="status-item complete">
+                  <div className="status-dot"></div>
+                  <span>Property Search</span>
+                </div>
+              )}
+              {listing?.agent.email && (
+                <div className="status-item complete">
+                  <div className="status-dot"></div>
+                  <span>Contact Found</span>
+                </div>
+              )}
+              {emailDraft && (
+                <div className="status-item complete">
+                  <div className="status-dot"></div>
+                  <span>Email & Invite Staged</span>
+                </div>
+              )}
+              {authenticated && emailDraft && listing?.agent.email && (
+                <div className="status-item complete">
+                  <div className="status-dot"></div>
+                  <span>Microsoft Authenticated</span>
+                </div>
+              )}
+              {userWalletAddress && (
+                <div className="status-item complete">
+                  <div className="status-dot"></div>
+                  <span>Wallet Connected</span>
+                </div>
+              )}
             </div>
           </div>
           {listing && (
             <div className="listing-panel">
               <h3 className="panel-title">🏠 Selected Property</h3>
-              <p><strong>Address:</strong> {listing.address}</p>
-              <p><strong>Price:</strong> ${listing.price.toLocaleString()}/month</p>
-              <p><strong>Beds / Baths:</strong> {listing.bedrooms} bed / {listing.bathrooms} bath</p>
-              <p><strong>Type:</strong> {listing.propertyType}</p>
+              <p>
+                <strong>Address:</strong> {listing.address}
+              </p>
+              <p>
+                <strong>Price:</strong> ${listing.price.toLocaleString()}/month
+              </p>
+              <p>
+                <strong>Beds / Baths:</strong> {listing.bedrooms} bed / {listing.bathrooms} bath
+              </p>
+              <p>
+                <strong>Type:</strong> {listing.propertyType}
+              </p>
               <p>
                 <strong>Listing:</strong>{" "}
                 {listing.detailUrl !== "#" ? (
-                  <a href={formatUrl(listing.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
+                  <a
+                    href={formatUrl(listing.detailUrl)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="agent-link"
+                  >
                     View Agent Site
                   </a>
                 ) : (
@@ -1035,25 +1179,25 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
         <h3 className="listings-title">Your Best Matches</h3>
         <p className="listings-subtitle">Make a more detailed prompt to get a better match.</p>
         <div className="listings-grid">
-          <ListingCard
-            list={testListing}
-            handleGenerateDraft={handleGenerateDraft}
-            listingDrafts={listingDrafts}
-            calendarTime={calendarTime}
-            setCalendarTime={setCalendarTime}
-            authenticated={authenticated}
-            handleLogin={handleLogin}
-            sendEmailAndCreateInvite={sendEmailAndCreateInvite}
-            finalActionLoading={finalActionLoading}
-            handleDeposit={handleDeposit}
-            handleFundWallet={handleFundWallet}
-            isFundingWallet={isFundingWallet}
-          />
-          {allListings
-            .slice(0, showAllListings ? allListings.length : 3)
-            .map((list, index) => (
+          <Suspense fallback={<div>Loading Listing Card...</div>}>
+            <ListingCard
+              list={testListing}
+              handleGenerateDraft={handleGenerateDraft}
+              listingDrafts={listingDrafts}
+              calendarTime={calendarTime}
+              setCalendarTime={setCalendarTime}
+              authenticated={authenticated}
+              handleLogin={handleLogin}
+              sendEmailAndCreateInvite={sendEmailAndCreateInvite}
+              finalActionLoading={finalActionLoading}
+              handleDeposit={handleDeposit}
+              handleFundWallet={handleFundWallet}
+              isFundingWallet={isFundingWallet}
+            />
+          </Suspense>
+          {allListings.slice(0, showAllListings ? allListings.length : 3).map((list, index) => (
+            <Suspense key={index} fallback={<div>Loading Listing Card...</div>}>
               <ListingCard
-                key={index}
                 list={list}
                 handleGenerateDraft={handleGenerateDraft}
                 listingDrafts={listingDrafts}
@@ -1067,10 +1211,14 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
                 handleFundWallet={handleFundWallet}
                 isFundingWallet={isFundingWallet}
               />
-            ))}
+            </Suspense>
+          ))}
         </div>
         {allListings.length > 3 && (
-          <button onClick={() => setShowAllListings(!showAllListings)} className="see-more-button">
+          <button
+            onClick={() => setShowAllListings(!showAllListings)}
+            className="see-more-button"
+          >
             {showAllListings ? "Show Less" : `See More (${allListings.length - 3} more)`}
           </button>
         )}
@@ -1088,7 +1236,11 @@ function Home({ onWalletConnect }: { onWalletConnect: (address: string) => void 
                   ? "Review the email and calendar invite."
                   : "Authorize Microsoft to send or copy the draft below."}
               </div>
-              <textarea className="email-textarea" value={emailDraft} onChange={(e) => setEmailDraft(e.target.value)} />
+              <textarea
+                className="email-textarea"
+                value={emailDraft}
+                onChange={(e) => setEmailDraft(e.target.value)}
+              />
             </div>
           </div>
         </div>
@@ -1107,18 +1259,21 @@ export default function Page() {
   });
 
   const handleWalletConnect = (address: string) => {
-    // Define handleWalletConnect in Page scope to pass to Home and Web3Wrapper
     console.log(`Wallet connected: ${address}`);
   };
 
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
-        <AppOnchainProvider>
-          <Web3Wrapper onWalletConnect={handleWalletConnect}>
-            <Home onWalletConnect={handleWalletConnect} />
-          </Web3Wrapper>
-        </AppOnchainProvider>
+        <Suspense fallback={<div>Loading Onchain Provider...</div>}>
+          <AppOnchainProvider>
+            <Suspense fallback={<div>Loading Wallet Connection...</div>}>
+              <Web3Wrapper onWalletConnect={handleWalletConnect}>
+                <Home onWalletConnect={handleWalletConnect} />
+              </Web3Wrapper>
+            </Suspense>
+          </AppOnchainProvider>
+        </Suspense>
       </QueryClientProvider>
     </WagmiProvider>
   );
