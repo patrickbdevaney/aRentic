@@ -694,8 +694,8 @@ function Home() {
       });
 
       if (!eventResponse.ok) {
-        const errorData = await eventResponse.json();
-        throw new Error(`Microsoft Graph API error (Event): ${eventResponse.status} - ${errorData.error?.message || 'Unknown error'}`);
+        const eventErrorData = await eventResponse.json();
+        throw new Error(`Microsoft Graph API error (Event): ${eventResponse.status} - ${eventErrorData.error?.message || 'Unknown error'}`);
       }
       console.log('Calendar invite created successfully');
 
@@ -784,198 +784,206 @@ function Home() {
   };
 
   return (
+    <div className="container">
+      <div className="header">
+        <h1 className="main-title">🏠 Rental AI Assistant</h1>
+        <p className="subtitle">The smartest way to find and schedule your next rental with crypto escrow.</p>
+      </div>
+
+      <div className="pre-schedule-section">
+        <h3>🗓️ Set Your Weekly Availability</h3>
+        <p>Tell us when you're free, and our AI will schedule viewings for you. (Coming Soon!)</p>
+      </div>
+
+      <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', alignItems: 'center' }}>
+        <ConnectWallet />
+        <FundButton />
+      </div>
+
+      <div className="main-grid">
+        <div className="chat-section">
+          <div className="chat-container">
+            <div className="chat-header">
+              <h2 className="chat-title">
+                💬 Chat
+                {isLoading && <div className="spinner"></div>}
+              </h2>
+            </div>
+            <div className="chat-messages">
+              {chat.map((msg, i) => {
+                const isUser = msg.startsWith('👤 You:');
+                return (
+                  <div key={i} className={`message-wrapper ${isUser ? 'user-message' : 'system-message'}`}>
+                    <div className={`message ${isUser ? 'user' : 'system'}`}>
+                      <p>{msg}</p>
+                    </div>
+                  </div>
+                );
+              })}
+              {isLoading && (
+                <div className="message-wrapper system-message">
+                  <div className="message system"><div className="typing-indicator"><div className="dot"></div><div className="dot"></div><div className="dot"></div></div></div>
+                </div>
+              )}
+            </div>
+            <div className="input-area">
+              <div className="input-wrapper">
+                <input
+                  type="text"
+                  className="chat-input"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSubmit()}
+                  placeholder="e.g., 2BR 1BA apartment in Williamsburg, New York under $3000"
+                  disabled={isLoading}
+                />
+                <select
+                  className="state-select"
+                  value={selectedState}
+                  onChange={(e) => setSelectedState(e.target.value)}
+                  disabled={isLoading}
+                >
+                  {usStates.map(state => (
+                    <option key={state.code} value={state.code}>{state.name}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleSubmit}
+                  className="send-button"
+                  disabled={isLoading || !prompt.trim()}
+                >
+                  ✈️ Search
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="sidebar">
+          <div className="status-panel">
+            <h3 className="panel-title">⚡ Progress</h3>
+            <div className="status-items">
+              {listing && <div className="status-item complete"><div className="status-dot"></div><span>Property Search</span></div>}
+              {listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Contact Found</span></div>}
+              {emailDraft && <div className="status-item complete"><div className="status-dot"></div><span>Email & Invite Staged</span></div>}
+              {authenticated && emailDraft && listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Authenticated to Send</span></div>}
+              {userWalletAddress && <div className="status-item complete"><div className="status-dot"></div><span>Wallet Connected</span></div>}
+            </div>
+          </div>
+          {listing && (
+            <div className="listing-panel">
+              <h3 className="panel-title">🏠 Selected Property</h3>
+              <p><strong>Address:</strong> {listing.address}</p>
+              <p><strong>Price:</strong> ${listing.price.toLocaleString()}/month</p>
+              <p><strong>Beds / Baths:</strong> {listing.bedrooms} bed / {listing.bathrooms} bath</p>
+              <p><strong>Type:</strong> {listing.propertyType}</p>
+              <p>
+                <strong>Listing:</strong>{' '}
+                {listing.detailUrl !== '#' ? (
+                  <a href={formatUrl(listing.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
+                    View Agent Site
+                  </a>
+                ) : (
+                  <span style={{ color: '#d1d5db' }}>No agent site available</span>
+                )}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="listings-section">
+        <h3 className="listings-title">Your Best Matches</h3>
+        <p className="listings-subtitle">Make a more detailed prompt to get a better match.</p>
+        <div className="listings-grid">
+          <ListingCard
+            list={testListing}
+            handleGenerateDraft={handleGenerateDraft}
+            listingDrafts={listingDrafts}
+            calendarTime={calendarTime}
+            setCalendarTime={setCalendarTime}
+            authenticated={authenticated}
+            handleLogin={handleLogin}
+            sendEmailAndCreateInvite={sendEmailAndCreateInvite}
+            finalActionLoading={finalActionLoading}
+            handleDeposit={handleDeposit}
+          />
+          {allListings
+            .slice(0, showAllListings ? allListings.length : 3)
+            .map((list, index) => (
+              <ListingCard
+                key={index}
+                list={list}
+                handleGenerateDraft={handleGenerateDraft}
+                listingDrafts={listingDrafts}
+                calendarTime={calendarTime}
+                setCalendarTime={setCalendarTime}
+                authenticated={authenticated}
+                handleLogin={handleLogin}
+                sendEmailAndCreateInvite={sendEmailAndCreateInvite}
+                finalActionLoading={finalActionLoading}
+                handleDeposit={handleDeposit}
+              />
+            ))}
+        </div>
+        {allListings.length > 3 && (
+          <button onClick={() => setShowAllListings(!showAllListings)} className="see-more-button">
+            {showAllListings ? 'Show Less' : `See More (${allListings.length - 3} more)`}
+          </button>
+        )}
+      </div>
+
+      {emailDraft && (
+        <div className="details-panel">
+          <h3 className="details-title">📋 Review Draft</h3>
+          <div className="details-grid">
+            <div className="email-section">
+              <h4 className="section-title email-title">📝 Inquiry Email</h4>
+              <div className="instructions">
+                <strong>Action:</strong> {authenticated && listing?.agent.email ? 'Review the email and calendar invite.' : 'Authorize Microsoft to send or copy the draft below.'}
+              </div>
+              <textarea
+                className="email-textarea"
+                value={emailDraft}
+                onChange={(e) => setEmailDraft(e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style jsx>{`
+        .deposit-button { 
+          background: linear-gradient(45deg, #eab308, #f97316); 
+          color: white; 
+          font-weight: 600; 
+          padding: 0.75rem 1.5rem; 
+          border: none; 
+          border-radius: 0.5rem; 
+          cursor: pointer; 
+        }
+        .deposit-button:hover { 
+          transform: scale(1.05); 
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// Export the top-level Page component with providers wrapping Home
+export default function Page() {
+  return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <AppOnchainProvider>
-          <Web3Wrapper onWalletConnect={handleWalletConnect}>
-            <div className="container">
-              <div className="header">
-                <h1 className="main-title">🏠 Rental AI Assistant</h1>
-                <p className="subtitle">The smartest way to find and schedule your next rental with crypto escrow.</p>
-              </div>
-
-              <div className="pre-schedule-section">
-                <h3>🗓️ Set Your Weekly Availability</h3>
-                <p>Tell us when you're free, and our AI will schedule viewings for you. (Coming Soon!)</p>
-              </div>
-
-              <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', alignItems: 'center' }}>
-                <ConnectWallet />
-                <FundButton />
-              </div>
-
-              <div className="main-grid">
-                <div className="chat-section">
-                  <div className="chat-container">
-                    <div className="chat-header">
-                      <h2 className="chat-title">
-                        💬 Chat
-                        {isLoading && <div className="spinner"></div>}
-                      </h2>
-                    </div>
-                    <div className="chat-messages">
-                      {chat.map((msg, i) => {
-                        const isUser = msg.startsWith('👤 You:');
-                        return (
-                          <div key={i} className={`message-wrapper ${isUser ? 'user-message' : 'system-message'}`}>
-                            <div className={`message ${isUser ? 'user' : 'system'}`}>
-                              <p>{msg}</p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {isLoading && (
-                        <div className="message-wrapper system-message">
-                          <div className="message system"><div className="typing-indicator"><div className="dot"></div><div className="dot"></div><div className="dot"></div></div></div>
-                        </div>
-                      )}
-                    </div>
-                    <div className="input-area">
-                      <div className="input-wrapper">
-                        <input
-                          type="text"
-                          className="chat-input"
-                          value={prompt}
-                          onChange={(e) => setPrompt(e.target.value)}
-                          onKeyPress={(e) => e.key === 'Enter' && handleSubmit()}
-                          placeholder="e.g., 2BR 1BA apartment in Williamsburg, New York under $3000"
-                          disabled={isLoading}
-                        />
-                        <select
-                          className="state-select"
-                          value={selectedState}
-                          onChange={(e) => setSelectedState(e.target.value)}
-                          disabled={isLoading}
-                        >
-                          {usStates.map(state => (
-                            <option key={state.code} value={state.code}>{state.name}</option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={handleSubmit}
-                          className="send-button"
-                          disabled={isLoading || !prompt.trim()}
-                        >
-                          ✈️ Search
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="sidebar">
-                  <div className="status-panel">
-                    <h3 className="panel-title">⚡ Progress</h3>
-                    <div className="status-items">
-                      {listing && <div className="status-item complete"><div className="status-dot"></div><span>Property Search</span></div>}
-                      {listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Contact Found</span></div>}
-                      {emailDraft && <div className="status-item complete"><div className="status-dot"></div><span>Email & Invite Staged</span></div>}
-                      {authenticated && emailDraft && listing?.agent.email && <div className="status-item complete"><div className="status-dot"></div><span>Authenticated to Send</span></div>}
-                      {userWalletAddress && <div className="status-item complete"><div className="status-dot"></div><span>Wallet Connected</span></div>}
-                    </div>
-                  </div>
-                  {listing && (
-                    <div className="listing-panel">
-                      <h3 className="panel-title">🏠 Selected Property</h3>
-                      <p><strong>Address:</strong> {listing.address}</p>
-                      <p><strong>Price:</strong> ${listing.price.toLocaleString()}/month</p>
-                      <p><strong>Beds / Baths:</strong> {listing.bedrooms} bed / {listing.bathrooms} bath</p>
-                      <p><strong>Type:</strong> {listing.propertyType}</p>
-                      <p>
-                        <strong>Listing:</strong>{' '}
-                        {listing.detailUrl !== '#' ? (
-                          <a href={formatUrl(listing.detailUrl)} target="_blank" rel="noopener noreferrer" className="agent-link">
-                            View Agent Site
-                          </a>
-                        ) : (
-                          <span style={{ color: '#d1d5db' }}>No agent site available</span>
-                        )}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="listings-section">
-                <h3 className="listings-title">Your Best Matches</h3>
-                <p className="listings-subtitle">Make a more detailed prompt to get a better match.</p>
-                <div className="listings-grid">
-                  <ListingCard
-                    list={testListing}
-                    handleGenerateDraft={handleGenerateDraft}
-                    listingDrafts={listingDrafts}
-                    calendarTime={calendarTime}
-                    setCalendarTime={setCalendarTime}
-                    authenticated={authenticated}
-                    handleLogin={handleLogin}
-                    sendEmailAndCreateInvite={sendEmailAndCreateInvite}
-                    finalActionLoading={finalActionLoading}
-                    handleDeposit={handleDeposit}
-                  />
-                  {allListings
-                    .slice(0, showAllListings ? allListings.length : 3)
-                    .map((list, index) => (
-                      <ListingCard
-                        key={index}
-                        list={list}
-                        handleGenerateDraft={handleGenerateDraft}
-                        listingDrafts={listingDrafts}
-                        calendarTime={calendarTime}
-                        setCalendarTime={setCalendarTime}
-                        authenticated={authenticated}
-                        handleLogin={handleLogin}
-                        sendEmailAndCreateInvite={sendEmailAndCreateInvite}
-                        finalActionLoading={finalActionLoading}
-                        handleDeposit={handleDeposit}
-                      />
-                    ))}
-                </div>
-                {allListings.length > 3 && (
-                  <button onClick={() => setShowAllListings(!showAllListings)} className="see-more-button">
-                    {showAllListings ? 'Show Less' : `See More (${allListings.length - 3} more)`}
-                  </button>
-                )}
-              </div>
-
-              {emailDraft && (
-                <div className="details-panel">
-                  <h3 className="details-title">📋 Review Draft</h3>
-                  <div className="details-grid">
-                    <div className="email-section">
-                      <h4 className="section-title email-title">📝 Inquiry Email</h4>
-                      <div className="instructions">
-                        <strong>Action:</strong> {authenticated && listing?.agent.email ? 'Review the email and calendar invite.' : 'Authorize Microsoft to send or copy the draft below.'}
-                      </div>
-                      <textarea
-                        className="email-textarea"
-                        value={emailDraft}
-                        onChange={(e) => setEmailDraft(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <style jsx>{`
-                .deposit-button { 
-                  background: linear-gradient(45deg, #eab308, #f97316); 
-                  color: white; 
-                  font-weight: 600; 
-                  padding: 0.75rem 1.5rem; 
-                  border: none; 
-                  border-radius: 0.5rem; 
-                  cursor: pointer; 
-                }
-                .deposit-button:hover { 
-                  transform: scale(1.05); 
-                }
-              `}</style>
-            </div>
+          <Web3Wrapper onWalletConnect={(address: string) => {
+            // Pass the handleWalletConnect function to Web3Wrapper
+            Home().props.children.props.onWalletConnect(address);
+          }}>
+            <Home />
           </Web3Wrapper>
         </AppOnchainProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );
 }
-
-export default Home;
